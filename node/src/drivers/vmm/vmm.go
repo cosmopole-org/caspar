@@ -1,4 +1,4 @@
-package wasm
+package vmm
 
 import (
 	"bytes"
@@ -31,7 +31,7 @@ import (
 	zmq "github.com/pebbe/zmq4"
 )
 
-type Wasm struct {
+type Vmm struct {
 	app         core.ICore
 	storageRoot string
 	storage     storage.IStorage
@@ -40,11 +40,22 @@ type Wasm struct {
 	aeSocket    chan string
 }
 
-func (wm *Wasm) Assign(machineId string) {
+func (wm *Vmm) Assign(machineId string) {
 	wm.app.Tools().Signaler().ListenToSingle(&signaler.Listener{
 		Id: machineId,
 		Signal: func(key string, a any) {
 			astPath := wm.app.Tools().Storage().StorageRoot() + "/machines/" + machineId + "/module"
+			vmType := "wasm"
+			wm.app.ModifyState(true, func(trx trx.ITrx) error {
+				vm := model.Vm{MachineId: machineId}.Pull(trx)
+				if vm.Path != "" {
+					astPath = vm.Path
+				}
+				if vm.Runtime != "" {
+					vmType = vm.Runtime
+				}
+				return nil
+			})
 			data := string(a.([]byte))
 			if key == "points/signal" {
 				str, _ := json.Marshal(map[string]any{
@@ -52,6 +63,7 @@ func (wm *Wasm) Assign(machineId string) {
 					"machineId": machineId,
 					"input":     data,
 					"astPath":   astPath,
+					"vmType":    vmType,
 				})
 				wm.aeSocket <- string(str)
 			}
@@ -59,11 +71,11 @@ func (wm *Wasm) Assign(machineId string) {
 	})
 }
 
-func (wm *Wasm) ExecuteChainTrxsGroup(trxs []*worker.Trx) {
+func (wm *Vmm) ExecuteChainTrxsGroup(trxs []*worker.Trx) {
 	_ = trxs
 }
 
-func (wm *Wasm) ExecuteChainEffects(effects string) {
+func (wm *Vmm) ExecuteChainEffects(effects string) {
 	_ = effects
 }
 
@@ -73,7 +85,7 @@ type ChainDbOp struct {
 	Val    string `json:"val"`
 }
 
-func (wm *Wasm) RunVm(machineId string, pointId string, data string) {
+func (wm *Vmm) RunVm(machineId string, pointId string, data string) {
 	point := model.Point{Id: pointId}
 	isMemberOfPoint := false
 	wm.app.ModifyState(true, func(trx trx.ITrx) error {
@@ -85,6 +97,17 @@ func (wm *Wasm) RunVm(machineId string, pointId string, data string) {
 		return
 	}
 	astPath := wm.app.Tools().Storage().StorageRoot() + "/machines/" + machineId + "/module"
+	vmType := "wasm"
+	wm.app.ModifyState(true, func(trx trx.ITrx) error {
+		vm := model.Vm{MachineId: machineId}.Pull(trx)
+		if vm.Path != "" {
+			astPath = vm.Path
+		}
+		if vm.Runtime != "" {
+			vmType = vm.Runtime
+		}
+		return nil
+	})
 	b, _ := json.Marshal(updates_points.Send{User: model.User{}, Point: point, Action: "single", Data: data})
 	input := string(b)
 	str, _ := json.Marshal(map[string]any{
@@ -92,11 +115,12 @@ func (wm *Wasm) RunVm(machineId string, pointId string, data string) {
 		"machineId": machineId,
 		"input":     input,
 		"astPath":   astPath,
+		"vmType":    vmType,
 	})
 	wm.aeSocket <- string(str)
 }
 
-func (wm *Wasm) TerminateVm(machineId string) {
+func (wm *Vmm) TerminateVm(machineId string) {
 	str, _ := json.Marshal(map[string]any{
 		"type":      "terminateVm",
 		"machineId": machineId,
@@ -104,10 +128,20 @@ func (wm *Wasm) TerminateVm(machineId string) {
 	wm.aeSocket <- string(str)
 }
 
+func (wm *Vmm) BuildVmImage(machineId string, imageName string, dockerfilePath string) {
+	str, _ := json.Marshal(map[string]any{
+		"type":           "buildVmImage",
+		"machineId":      machineId,
+		"imageName":      imageName,
+		"dockerfilePath": dockerfilePath,
+	})
+	wm.aeSocket <- string(str)
+}
+
 // WasmCallback is implemented in hostcall_global.go to keep host-call routing
 // separated from runtime bootstrapping logic in this file.
 
-func (wm *Wasm) handleRunDocker(input map[string]any, reqId int64) (string, int64) {
+func (wm *Vmm) handleRunDocker(input map[string]any, reqId int64) (string, int64) {
 	machineId, err := checkField(input, "machineId", "")
 	if err != nil {
 		println(err)
@@ -229,7 +263,7 @@ func (wm *Wasm) handleRunDocker(input map[string]any, reqId int64) (string, int6
 	return "{}", reqId
 }
 
-func (wm *Wasm) handleExecDocker(input map[string]any, reqId int64) (string, int64) {
+func (wm *Vmm) handleExecDocker(input map[string]any, reqId int64) (string, int64) {
 	machineId, err := checkField(input, "machineId", "")
 	if err != nil {
 		println(err)
@@ -258,7 +292,7 @@ func (wm *Wasm) handleExecDocker(input map[string]any, reqId int64) (string, int
 	return output, reqId
 }
 
-func (wm *Wasm) handleCopyToDocker(input map[string]any, reqId int64) (string, int64) {
+func (wm *Vmm) handleCopyToDocker(input map[string]any, reqId int64) (string, int64) {
 	machineId, err := checkField(input, "machineId", "")
 	if err != nil {
 		println(err)
@@ -292,7 +326,7 @@ func (wm *Wasm) handleCopyToDocker(input map[string]any, reqId int64) (string, i
 	return "", reqId
 }
 
-func (wm *Wasm) handleHTTPPost(input map[string]any, reqId int64) (string, int64) {
+func (wm *Vmm) handleHTTPPost(input map[string]any, reqId int64) (string, int64) {
 	url, err := checkField(input, "url", "")
 	if err != nil {
 		println(err)
@@ -343,7 +377,7 @@ func (wm *Wasm) handleHTTPPost(input map[string]any, reqId int64) (string, int64
 	return base64.StdEncoding.EncodeToString(bodyBytes), reqId
 }
 
-func (wm *Wasm) handleCheckTokenValidity(input map[string]any, reqId int64) (string, int64) {
+func (wm *Vmm) handleCheckTokenValidity(input map[string]any, reqId int64) (string, int64) {
 	tokenOwnerId, err := checkField(input, "tokenOwnerId", "")
 	if err != nil {
 		println(err)
@@ -368,7 +402,7 @@ func (wm *Wasm) handleCheckTokenValidity(input map[string]any, reqId int64) (str
 	return string(jsn), reqId
 }
 
-func (wm *Wasm) handlePlantTrigger(input map[string]any, reqId int64) (string, int64) {
+func (wm *Vmm) handlePlantTrigger(input map[string]any, reqId int64) (string, int64) {
 	count, err := checkField(input, "count", float64(0))
 	if err != nil {
 		println(err)
@@ -419,7 +453,7 @@ func (wm *Wasm) handlePlantTrigger(input map[string]any, reqId int64) (string, i
 	return "{}", reqId
 }
 
-func (wm *Wasm) handleSignalPoint(input map[string]any, reqId int64) (string, int64) {
+func (wm *Vmm) handleSignalPoint(input map[string]any, reqId int64) (string, int64) {
 	machineId, err := checkField(input, "machineId", "")
 	if err != nil {
 		println(err)
@@ -469,7 +503,7 @@ func (wm *Wasm) handleSignalPoint(input map[string]any, reqId int64) (string, in
 	return "{}", reqId
 }
 
-func (wm *Wasm) handleRunVM(input map[string]any, reqId int64) (string, int64) {
+func (wm *Vmm) handleRunVM(input map[string]any, reqId int64) (string, int64) {
 	targetRuntime, err := checkField(input, "runtime", "")
 	if err != nil {
 		return err.Error(), reqId
@@ -573,7 +607,7 @@ func parseChainPayPacket(input map[string]any) *chain.ChainPayPacket {
 	return pay
 }
 
-func (wm *Wasm) handleSendMessageOnChain(input map[string]any, reqId int64) (string, int64) {
+func (wm *Vmm) handleSendMessageOnChain(input map[string]any, reqId int64) (string, int64) {
 	chainId, _ := checkField(input, "chainId", "main")
 	key, err := checkField(input, "msgKey", "")
 	if err != nil {
@@ -595,7 +629,7 @@ func (wm *Wasm) handleSendMessageOnChain(input map[string]any, reqId int64) (str
 	return "{}", reqId
 }
 
-func (wm *Wasm) handleTerminateVM(input map[string]any, reqId int64) (string, int64) {
+func (wm *Vmm) handleTerminateVM(input map[string]any, reqId int64) (string, int64) {
 	targetRuntime, err := checkField(input, "runtime", "")
 	if err != nil {
 		return err.Error(), reqId
@@ -629,9 +663,9 @@ func checkField[T any](input map[string]any, fieldName string, defVal T) (T, err
 	return f, nil
 }
 
-func NewWasm(core core.ICore, storageRoot string, storage storage.IStorage, kvDbPath string, docker docker.IDocker, file file.IFile) *Wasm {
+func NewVmm(core core.ICore, storageRoot string, storage storage.IStorage, kvDbPath string, docker docker.IDocker, file file.IFile) *Vmm {
 	os.MkdirAll(kvDbPath, os.ModePerm)
-	wm := &Wasm{
+	wm := &Vmm{
 		app:         core,
 		storageRoot: storageRoot,
 		storage:     storage,
@@ -675,6 +709,6 @@ func NewWasm(core core.ICore, storageRoot string, storage storage.IStorage, kvDb
 	return wm
 }
 
-func (wm *Wasm) CloseKVDB() {
+func (wm *Vmm) CloseKVDB() {
 	// C.close()
 }

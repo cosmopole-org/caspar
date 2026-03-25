@@ -218,6 +218,15 @@ Action inputs are implemented in:
 - `node/src/shell/api/inputs/users`
 - `node/src/shell/api/inputs/points`
 - `node/src/shell/api/inputs/machine`
+
+`POST /machines/deploy` accepts:
+
+- `machineId` (string, required)
+- `entityId` (string, required)
+- `entityType` (string, required): one of `javascript`, `elpify`, `wasm`, `docker`
+- `downloadable` (boolean): whether this machine entity can be downloaded through storage entity APIs
+- `payload` (base64 string, required): dockerfile/module/program source payload
+- `metadata` (object, optional): docker build metadata (for example extra files, image naming)
 - `node/src/shell/api/inputs/invites`
 - `node/src/shell/api/inputs/storage`
 - `node/src/shell/api/inputs/chain`
@@ -225,4 +234,3 @@ Action inputs are implemented in:
 - `node/src/shell/api/inputs/pc`
 
 Use those files as authoritative schema definitions (JSON fields + validation tags).
-

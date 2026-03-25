@@ -1,10 +1,10 @@
-package wasm
+package vmm
 
 import "encoding/json"
 
 // WasmCallback handles appengine host-call packets globally for all appengine
 // runtimes (wasm/docker) through the same ZeroMQ callback channel.
-func (wm *Wasm) WasmCallback(dataRaw string) (string, int64) {
+func (wm *Vmm) WasmCallback(dataRaw string) (string, int64) {
 	println(dataRaw)
 	data := map[string]any{}
 	err := json.Unmarshal([]byte(dataRaw), &data)

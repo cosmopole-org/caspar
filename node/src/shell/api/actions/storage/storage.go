@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -154,7 +155,32 @@ func Install(a *Actions, extra ...any) error {
 				http.Error(w, "can't parse body", http.StatusBadRequest)
 				return
 			}
-			data, err := a.App.Tools().File().ReadFileFromGlobalStorage(a.App.Tools().Storage().StorageRoot()+"/entities/users/"+input.UserId, input.EntityId)
+			allowDownload := true
+			a.App.ModifyState(true, func(trx trx.ITrx) error {
+				if trx.HasObj("Vm", input.UserId) {
+					flag := trx.GetLink("vmEntityDownloadable::" + input.UserId + "::" + input.EntityId)
+					if flag != "true" {
+						allowDownload = false
+					}
+				}
+				return nil
+			})
+			if !allowDownload {
+				http.Error(w, "entity is not downloadable", http.StatusForbidden)
+				return
+			}
+			storagePath := a.App.Tools().Storage().StorageRoot() + "/entities/users/" + input.UserId
+			storageFile := input.EntityId
+			a.App.ModifyState(true, func(trx trx.ITrx) error {
+				if trx.HasObj("Vm", input.UserId) {
+					if entityPath := trx.GetLink("vmEntityPath::" + input.UserId + "::" + input.EntityId); entityPath != "" {
+						storagePath = filepath.Dir(entityPath)
+						storageFile = filepath.Base(entityPath)
+					}
+				}
+				return nil
+			})
+			data, err := a.App.Tools().File().ReadFileFromGlobalStorage(storagePath, storageFile)
 			if err != nil {
 				log.Println(err)
 				http.Error(w, "can't read file", http.StatusBadRequest)

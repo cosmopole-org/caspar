@@ -3,6 +3,7 @@ package actions_machine
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"kasper/src/abstract/models/core"
 	"kasper/src/abstract/models/trx"
 	"kasper/src/abstract/state"
@@ -31,8 +32,8 @@ func Install(a *Actions, extra ...any) error {
 			panic(err)
 		}
 		for _, vm := range vms {
-			if vm.Runtime == "wasm" {
-				a.App.Tools().Wasm().Assign(vm.MachineId)
+			if vm.Runtime == "wasm" || vm.Runtime == "elpify" || vm.Runtime == "javascript" {
+				a.App.Tools().Vmm().Assign(vm.MachineId)
 				if pointId := trx.GetLink("vmAlarmPointId::" + vm.MachineId); pointId != "" {
 					future.Async(func() {
 						t, _ := strconv.ParseInt(trx.GetLink("vmAlarmTime::"+vm.MachineId), 10, 64)
@@ -45,7 +46,7 @@ func Install(a *Actions, extra ...any) error {
 						trx.DelKey("link::vmAlarmData::" + vm.MachineId)
 						trx.DelKey("link::vmAlarmTime::" + vm.MachineId)
 						if a.App.Tools().Security().HasAccessToPoint(vm.MachineId, pointId) {
-							a.App.Tools().Wasm().RunVm(vm.MachineId, pointId, data)
+							a.App.Tools().Vmm().RunVm(vm.MachineId, pointId, data)
 						}
 					}, false)
 				}
@@ -339,45 +340,28 @@ func (a *Actions) Deploy(state state.IState, input inputs_machiner.DeployInput) 
 	if app.OwnerId != state.Info().UserId() {
 		return nil, errors.New("access to vm denied")
 	}
-	data, err := base64.StdEncoding.DecodeString(input.ByteCode)
+	if input.EntityType != "docker" && input.EntityType != "wasm" && input.EntityType != "elpify" && input.EntityType != "javascript" {
+		return nil, errors.New("invalid entityType, expected one of docker|wasm|elpify|javascript")
+	}
+	data, err := base64.StdEncoding.DecodeString(input.Payload)
 	if err != nil {
 		return nil, err
 	}
-	var standalone bool
-	if input.Runtime == "docker" {
-		if input.Metadata == nil {
-			return nil, errors.New("image name not provided")
-		}
-		saRaw, ok := input.Metadata["standalone"]
-		if ok {
-			sa, ok2 := saRaw.(bool)
-			if ok2 {
-				standalone = sa
+	entityPathForLink := ""
+	if input.EntityType == "docker" {
+		imageName := input.EntityId
+		files := map[string]any{}
+		if input.Metadata != nil {
+			filesRaw, ok := input.Metadata["files"]
+			if ok {
+				filesCast, ok2 := filesRaw.(map[string]any)
+				if !ok2 {
+					return nil, errors.New("files is not map")
+				}
+				files = filesCast
 			}
 		}
-		var imageName string
-		if !standalone {
-			iName, ok := input.Metadata["imageName"]
-			if !ok {
-				return nil, errors.New("image name not provided")
-			}
-			in, ok2 := iName.(string)
-			if !ok2 {
-				return nil, errors.New("image name is not string")
-			}
-			imageName = in
-		} else {
-			imageName = "main"
-		}
-		filesRaw, ok := input.Metadata["files"]
-		if !ok {
-			return nil, errors.New("files not provided")
-		}
-		files, ok2 := filesRaw.(map[string]any)
-		if !ok2 {
-			return nil, errors.New("files is not map")
-		}
-		dockerfileFolderPath := a.App.Tools().Storage().StorageRoot() + pluginsTemplateName + vm.MachineId + "/" + imageName
+		dockerfileFolderPath := fmt.Sprintf("%s%s%s/entities/%s", a.App.Tools().Storage().StorageRoot(), pluginsTemplateName, vm.MachineId, input.EntityId)
 		err2 := a.App.Tools().File().SaveDataToGlobalStorage(dockerfileFolderPath, data, "Dockerfile", true)
 		if err2 != nil {
 			return nil, err2
@@ -398,43 +382,38 @@ func (a *Actions) Deploy(state state.IState, input inputs_machiner.DeployInput) 
 				return nil, err2
 			}
 		}
-		outputChan := make(chan string)
 		buildId := uuid.NewString()
 		trx.PutLink("vmBuilds::"+vm.MachineId+"::"+buildId, "true")
 		future.Async(func() {
-			for {
-				data := <-outputChan
-				if data == "" {
-					break
-				}
-				l := a.App.Tools().Storage().LogBuild(buildId, vm.MachineId, data)
-				a.App.Tools().Signaler().SignalUser("docker/build", state.Info().UserId(), l, true)
-			}
+			a.App.Tools().Vmm().BuildVmImage(vm.MachineId, imageName, dockerfileFolderPath)
 		}, false)
-		future.Async(func() {
-			err3 := a.App.Tools().Docker().BuildImage(dockerfileFolderPath, vm.MachineId, imageName, outputChan)
-			if err3 != nil {
-				log.Println(err3)
-			}
-		}, false)
-		if standalone {
-			vm.Runtime = input.Runtime
-			vm.Push(trx)
-			a.App.Tools().Docker().Assign(vm.MachineId)
-		}
+		entityPathForLink = dockerfileFolderPath + "/Dockerfile"
 	} else {
-		err2 := a.App.Tools().File().SaveDataToGlobalStorage(a.App.Tools().Storage().StorageRoot()+pluginsTemplateName+vm.MachineId+"/", data, "module", true)
+		fileName := "module.wasm"
+		if input.EntityType == "elpify" {
+			fileName = "module.masm"
+		} else if input.EntityType == "javascript" {
+			fileName = "module.js"
+		}
+		entityFolderPath := fmt.Sprintf("%s%s%s/entities/%s", a.App.Tools().Storage().StorageRoot(), pluginsTemplateName, vm.MachineId, input.EntityId)
+		entityPath := entityFolderPath + "/" + fileName
+		err2 := a.App.Tools().File().SaveDataToGlobalStorage(entityFolderPath, data, fileName, true)
 		if err2 != nil {
 			return nil, err2
 		}
-		vm.Runtime = input.Runtime
+		vm.Runtime = input.EntityType
+		vm.Path = entityPath
+		entityPathForLink = entityPath
 		vm.Push(trx)
-		if vm.Runtime == "wasm" {
-			a.App.Tools().Wasm().Assign(vm.MachineId)
+		if vm.Runtime == "wasm" || vm.Runtime == "elpify" || vm.Runtime == "javascript" {
+			a.App.Tools().Vmm().Assign(vm.MachineId)
 		} else if vm.Runtime == "elpis" {
 			a.App.Tools().Elpis().Assign(vm.MachineId)
 		}
 	}
+	trx.PutLink("vmEntityPath::"+vm.MachineId+"::"+input.EntityId, entityPathForLink)
+	trx.PutLink("vmEntityType::"+vm.MachineId+"::"+input.EntityId, input.EntityType)
+	trx.PutLink("vmEntityDownloadable::"+vm.MachineId+"::"+input.EntityId, strconv.FormatBool(input.Downloadable))
 	return outputs_machiner.PlugInput{}, nil
 }
 

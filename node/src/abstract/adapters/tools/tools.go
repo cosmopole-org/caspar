@@ -18,7 +18,7 @@ type ITools interface {
 	Storage() storage.IStorage
 	Network() network.INetwork
 	File() file.IFile
-	Wasm() wasm.IWasm
+	Vmm() wasm.IWasm
 	Elpis() elpis.IElpis
 	Docker() docker.IDocker
 	Firectl() firectl.IFirectl

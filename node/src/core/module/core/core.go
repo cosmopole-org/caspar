@@ -34,15 +34,13 @@ import (
 	"kasper/src/shell/utils/crypto"
 	"kasper/src/shell/utils/future"
 
-	driver_docker "kasper/src/drivers/docker"
-	driver_elpis "kasper/src/drivers/elpis"
 	driver_file "kasper/src/drivers/file"
 	driver_firectl "kasper/src/drivers/firectl"
 	driver_network "kasper/src/drivers/network"
 	driver_security "kasper/src/drivers/security"
 	driver_signaler "kasper/src/drivers/signaler"
 	driver_storage "kasper/src/drivers/storage"
-	driver_wasm "kasper/src/drivers/wasm"
+	driver_vmm "kasper/src/drivers/vmm"
 
 	driver_network_fed "kasper/src/drivers/network/federation"
 
@@ -64,7 +62,7 @@ type Tools struct {
 	storage  storage.IStorage
 	network  network.INetwork
 	file     file.IFile
-	wasm     wasm.IWasm
+	vmm      wasm.IWasm
 	elpis    elpis.IElpis
 	docker   docker.IDocker
 	firectl  firectl.IFirectl
@@ -90,8 +88,8 @@ func (t *Tools) File() file.IFile {
 	return t.file
 }
 
-func (t *Tools) Wasm() wasm.IWasm {
-	return t.wasm
+func (t *Tools) Vmm() wasm.IWasm {
+	return t.vmm
 }
 
 func (t *Tools) Elpis() elpis.IElpis {
@@ -266,7 +264,7 @@ func (c *Core) AppPendingTrxs() {
 		c.Tools().Elpis().ExecuteChainTrxsGroup(elpisTrxs)
 	}
 	if len(wasmTrxs) > 0 {
-		c.Tools().Wasm().ExecuteChainTrxsGroup(wasmTrxs)
+		c.Tools().Vmm().ExecuteChainTrxsGroup(wasmTrxs)
 	}
 	c.appPendingTrxs = []*worker.Trx{}
 }
@@ -406,7 +404,7 @@ func (c *Core) runChainMessage(packet chain.ChainMessage) {
 		}
 		future.Async(func() {
 			if runtimeType == "wasm" {
-				c.Tools().Wasm().RunVm(machineId, packet.PointId, string(packet.Payload))
+				c.Tools().Vmm().RunVm(machineId, packet.PointId, string(packet.Payload))
 			}
 		}, false)
 	}
@@ -559,7 +557,7 @@ func (c *Core) Close() {
 	c.tools.Network().Chain().Close()
 	c.tools.Storage().KvDb().Close()
 	c.tools.Storage().TsDb().Close()
-	c.tools.Wasm().CloseKVDB()
+	c.tools.Vmm().CloseKVDB()
 }
 
 func (c *Core) MarkAsStarted() {
@@ -581,9 +579,9 @@ func (c *Core) Load(gods []string, args map[string]interface{}) {
 	dsecurity := driver_security.New(c, sroot, dstorage, dsignaler)
 	dNetwork := driver_network.NewNetwork(c, dstorage, dsecurity, dsignaler, dnFederation)
 	dFile := driver_file.NewFileTool(sroot)
-	dDocker := driver_docker.NewDocker(c, sroot, dstorage, dFile)
-	dWasm := driver_wasm.NewWasm(c, sroot, dstorage, adbPath, dDocker, dFile)
-	dElpis := driver_elpis.NewElpis(c, sroot, dstorage)
+	var dDocker docker.IDocker
+	dVmm := driver_vmm.NewVmm(c, sroot, dstorage, adbPath, dDocker, dFile)
+	var dElpis elpis.IElpis
 	dnFederation.SecondStageForFill(dstorage, dFile, dsignaler)
 	dFirectl := driver_firectl.NewFireCtl()
 
@@ -606,7 +604,7 @@ func (c *Core) Load(gods []string, args map[string]interface{}) {
 		file:     dFile,
 		docker:   dDocker,
 		firectl:  dFirectl,
-		wasm:     dWasm,
+		vmm:      dVmm,
 		elpis:    dElpis,
 	}
 
