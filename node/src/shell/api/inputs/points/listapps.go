@@ -2,18 +2,18 @@ package inputs_points
 
 import "kasper/src/shell/utils/origin"
 
-type ListPointAppsInput struct {
+type ListPointMachinesInput struct {
 	PointId string `json:"pointId" validate:"required"`
 }
 
-func (d ListPointAppsInput) GetData() any {
+func (d ListPointMachinesInput) GetData() any {
 	return "dummy"
 }
 
-func (d ListPointAppsInput) GetPointId() string {
+func (d ListPointMachinesInput) GetPointId() string {
 	return d.PointId
 }
 
-func (d ListPointAppsInput) Origin() string {
+func (d ListPointMachinesInput) Origin() string {
 	return origin.FindOriginLocal(d.PointId)
 }

@@ -2,21 +2,21 @@ package inputs_points
 
 import "kasper/src/shell/utils/origin"
 
-type RemoveMachineInput struct {
-	AppId      string `json:"appId" validate:"required"`
-	PointId    string `json:"pointId" validate:"required"`
+type RemoveProgramInput struct {
 	MachineId  string `json:"machineId" validate:"required"`
+	PointId    string `json:"pointId" validate:"required"`
+	ProgramId  string `json:"programId" validate:"required"`
 	Identifier string `json:"identifier" validate:"required"`
 }
 
-func (d RemoveMachineInput) GetData() any {
+func (d RemoveProgramInput) GetData() any {
 	return "dummy"
 }
 
-func (d RemoveMachineInput) GetPointId() string {
+func (d RemoveProgramInput) GetPointId() string {
 	return d.PointId
 }
 
-func (d RemoveMachineInput) Origin() string {
+func (d RemoveProgramInput) Origin() string {
 	return origin.FindOriginLocal(d.PointId)
 }

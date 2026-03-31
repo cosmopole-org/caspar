@@ -11,24 +11,24 @@ func TestPointsInputsImplementInterface(t *testing.T) {
 	var _ input.IInput = DeleteInput{}
 	var _ input.IInput = HistoryInput{}
 	var _ input.IInput = RemoveMemberInput{}
-	var _ input.IInput = AddAppInput{}
+	var _ input.IInput = AddMachineInput{}
 	var _ input.IInput = UpdateMemberInput{}
 	var _ input.IInput = ListInput{}
 	var _ input.IInput = JoinInput{}
 	var _ input.IInput = MetaInput{}
-	var _ input.IInput = RemoveAppInput{}
+	var _ input.IInput = RemoveMachineInput{}
 	var _ input.IInput = SignalInput{}
 	var _ input.IInput = GetDefaultAccessInput{}
-	var _ input.IInput = AddMachineInput{}
-	var _ input.IInput = ListPointAppsInput{}
+	var _ input.IInput = AddProgramInput{}
+	var _ input.IInput = ListPointMachinesInput{}
 	var _ input.IInput = GlobalHistoryInput{}
 	var _ input.IInput = AddMemberInput{}
 	var _ input.IInput = GetInput{}
 	var _ input.IInput = CreateInput{}
 	var _ input.IInput = ReadInput{}
-	var _ input.IInput = UpdateMachineInput{}
-	var _ input.IInput = UpdateMachineAccessInput{}
-	var _ input.IInput = RemoveMachineInput{}
+	var _ input.IInput = UpdateProgramInput{}
+	var _ input.IInput = UpdateProgramAccessInput{}
+	var _ input.IInput = RemoveProgramInput{}
 	var _ input.IInput = ReadMemberInput{}
 	var _ input.IInput = UpdateInput{}
 }
@@ -37,10 +37,10 @@ func TestPointsOriginDerivation(t *testing.T) {
 	point := "point@origin-x"
 	localOriginPointInputs := []input.IInput{
 		UpdateMemberAccessInput{PointId: point}, DeleteInput{PointId: point}, RemoveMemberInput{PointId: point},
-		AddAppInput{PointId: point}, UpdateMemberInput{PointId: point}, JoinInput{PointId: point},
-		RemoveAppInput{PointId: point}, AddMachineInput{PointId: point}, ListPointAppsInput{PointId: point},
-		AddMemberInput{PointId: point}, GetInput{PointId: point}, UpdateMachineInput{PointId: point},
-		UpdateMachineAccessInput{PointId: point}, RemoveMachineInput{PointId: point}, ReadMemberInput{PointId: point},
+		AddMachineInput{PointId: point}, UpdateMemberInput{PointId: point}, JoinInput{PointId: point},
+		RemoveMachineInput{PointId: point}, AddProgramInput{PointId: point}, ListPointMachinesInput{PointId: point},
+		AddMemberInput{PointId: point}, GetInput{PointId: point}, UpdateProgramInput{PointId: point},
+		UpdateProgramAccessInput{PointId: point}, RemoveProgramInput{PointId: point}, ReadMemberInput{PointId: point},
 		UpdateInput{PointId: point},
 	}
 	for i, in := range localOriginPointInputs {

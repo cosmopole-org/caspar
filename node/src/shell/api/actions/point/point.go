@@ -59,11 +59,11 @@ var access = map[string]bool{
 	"updateMetadata": true,
 	"sendSignal":     true,
 	"readHistory":    true,
-	"addApp":         true,
 	"addMachine":     true,
-	"updateMachine":  true,
+	"addProgram":     true,
+	"updateProgram":  true,
+	"removeProgram":  true,
 	"removeMachine":  true,
-	"removeApp":      true,
 	"addMember":      false,
 	"updateMember":   false,
 	"readMembers":    false,
@@ -132,10 +132,10 @@ func (a *Actions) handleGodSignalCommand(state state.IState, input inputs_points
 	}
 }
 
-// AddApp /points/addApp check [ true true false ] access [ true false false false POST ]
-func (a *Actions) AddApp(state state.IState, input inputs_points.AddAppInput) (any, error) {
+// AddMachine /points/addMachine check [ true true false ] access [ true false false false POST ]
+func (a *Actions) AddMachine(state state.IState, input inputs_points.AddMachineInput) (any, error) {
 	if state.Trx().GetLink("admin::"+state.Info().PointId()+"::"+state.Info().UserId()) != "true" {
-		if meta, err := state.Trx().GetJson("PointAccess::"+state.Info().PointId()+"::"+state.Info().UserId(), "metadata"); err != nil || !meta["addApp"].(bool) {
+		if meta, err := state.Trx().GetJson("PointAccess::"+state.Info().PointId()+"::"+state.Info().UserId(), "metadata"); err != nil || !meta["addMachine"].(bool) {
 			return nil, errors.New("access not permitted")
 		}
 	}
@@ -144,41 +144,41 @@ func (a *Actions) AddApp(state state.IState, input inputs_points.AddAppInput) (a
 	locker, _ := a.Locks.Get(state.Info().PointId())
 	locker.Lock.Lock()
 	defer locker.Lock.Unlock()
-	if !trx.HasObj("App", input.AppId) {
-		return nil, errors.New("app not found")
+	if !trx.HasObj("App", input.MachineId) {
+		return nil, errors.New("machine not found")
 	}
-	machineModel := model.Machine{Id: input.AppId}.Pull(trx)
+	programModel := model.Machine{Id: input.MachineId}.Pull(trx)
 
-	machines, err := model.User{}.List(trx, "appMachines::"+input.AppId+"::", map[string]string{})
+	programs, err := model.User{}.List(trx, "appMachines::"+input.MachineId+"::", map[string]string{})
 	if err != nil {
 		log.Println(err)
 		return nil, err
 	}
-	programs, err := model.Program{}.List(trx, "appMachines::"+input.AppId+"::")
+	programModels, err := model.Program{}.List(trx, "appMachines::"+input.MachineId+"::")
 	if err != nil {
 		log.Println(err)
 		return nil, err
 	}
 	programMap := map[string]model.Program{}
-	for _, program := range programs {
+	for _, program := range programModels {
 		programMap[program.MachineId] = program
 	}
 	macMap := map[string]model.User{}
-	for _, mac := range machines {
+	for _, mac := range programs {
 		macMap[mac.Id] = mac
 	}
 	m := map[string]*updates_points.Fn{}
 	uniqueMacs := map[string][]string{}
-	for _, programMeta := range input.MachinesMeta {
+	for _, programMeta := range input.ProgramsMeta {
 
-		mac := macMap[programMeta.MachineId]
-		program := programMap[programMeta.MachineId]
+		mac := macMap[programMeta.ProgramId]
+		program := programMap[programMeta.ProgramId]
 		fn := &updates_points.Fn{
 			UserId:     mac.Id,
 			Typ:        mac.Typ,
 			Username:   mac.Username,
 			PublicKey:  mac.PublicKey,
-			MachineId:  program.AppId,
+			ProgramId:  program.AppId,
 			Runtime:    program.Runtime,
 			Path:       program.Path,
 			Comment:    program.Comment,
@@ -196,8 +196,8 @@ func (a *Actions) AddApp(state state.IState, input inputs_points.AddAppInput) (a
 			}
 		}
 		trx.PutJson("PointAccess::"+state.Info().PointId()+"::"+fn.UserId, "metadata", acc, false)
-		trx.PutJson("FnMeta::"+state.Info().PointId()+"::"+fn.MachineId+"::"+fn.UserId+"::"+programMeta.Identifier, "metadata", programMeta.Metadata, true)
-		trx.PutLink("pointAppMachine::"+state.Info().PointId()+"::"+machineModel.Id+"::"+programMeta.MachineId+"::"+programMeta.Identifier, "true")
+		trx.PutJson("FnMeta::"+state.Info().PointId()+"::"+fn.ProgramId+"::"+fn.UserId+"::"+programMeta.Identifier, "metadata", programMeta.Metadata, true)
+		trx.PutLink("pointMachineProgram::"+state.Info().PointId()+"::"+programModel.Id+"::"+programMeta.ProgramId+"::"+programMeta.Identifier, "true")
 		uniqueMacs[fn.UserId] = append(uniqueMacs[fn.UserId], programMeta.Identifier)
 	}
 	for uniMacId, _ := range uniqueMacs {
@@ -205,25 +205,25 @@ func (a *Actions) AddApp(state state.IState, input inputs_points.AddAppInput) (a
 		trx.PutLink("memberof::"+uniMacId+"::"+state.Info().PointId(), "true")
 		a.App.Tools().Signaler().JoinGroup(state.Info().PointId(), uniMacId)
 	}
-	trx.PutLink("pointApp::"+state.Info().PointId()+"::"+machineModel.Id, "true")
+	trx.PutLink("pointMachine::"+state.Info().PointId()+"::"+programModel.Id, "true")
 	future.Async(func() {
-		a.App.Tools().Signaler().SignalGroup("points/addApp", state.Info().PointId(), updates_points.AddApp{PointId: state.Info().PointId(), Machine: machineModel, Programs: m}, true, []string{})
+		a.App.Tools().Signaler().SignalGroup("points/addMachine", state.Info().PointId(), updates_points.AddMachine{PointId: state.Info().PointId(), Program: programModel, Programs: m}, true, []string{})
 	}, false)
 	return outputs_points.AddMemberOutput{}, nil
 }
 
-// ListPointApps /points/listApps check [ true true false ] access [ true false false false POST ]
-func (a *Actions) ListPointApps(state state.IState, input inputs_points.ListPointAppsInput) (any, error) {
+// ListPointMachines /points/listMachines check [ true true false ] access [ true false false false POST ]
+func (a *Actions) ListPointMachines(state state.IState, input inputs_points.ListPointMachinesInput) (any, error) {
 	trx := state.Trx()
-	prefix := "pointAppMachine::" + state.Info().PointId() + "::"
-	machineLinks, err := trx.GetLinksList(prefix, 0, 1000)
+	prefix := "pointMachineProgram::" + state.Info().PointId() + "::"
+	programLinks, err := trx.GetLinksList(prefix, 0, 1000)
 	if err != nil {
 		log.Println(err)
 		return nil, err
 	}
 	fns := map[string]*updates_points.Fn{}
-	machinesById := map[string]model.Machine{}
-	for _, mlink := range machineLinks {
+	programsById := map[string]model.Machine{}
+	for _, mlink := range programLinks {
 		parts := strings.Split(mlink[len(prefix):], "::")
 		machineId := parts[0]
 		programId := parts[1]
@@ -259,7 +259,7 @@ func (a *Actions) ListPointApps(state state.IState, input inputs_points.ListPoin
 			Typ:        program.Typ,
 			Username:   program.Username,
 			PublicKey:  program.PublicKey,
-			MachineId:  programModel.AppId,
+			ProgramId:  programModel.AppId,
 			Runtime:    programModel.Runtime,
 			Path:       programModel.Path,
 			Comment:    programModel.Comment,
@@ -268,18 +268,18 @@ func (a *Actions) ListPointApps(state state.IState, input inputs_points.ListPoin
 			Access:     acc,
 		}
 
-		if _, ok := machinesById[fn.MachineId]; !ok {
-			machinesById[fn.MachineId] = model.Machine{Id: fn.MachineId}.Pull(trx, true)
+		if _, ok := programsById[fn.ProgramId]; !ok {
+			programsById[fn.ProgramId] = model.Machine{Id: fn.ProgramId}.Pull(trx, true)
 		}
 		fns[fn.UserId+"::"+fn.Identifier] = fn
 	}
-	return outputs_points.ListPointAppsOutput{Programs: fns, Machines: machinesById}, nil
+	return outputs_points.ListPointMachinesOutput{Programs: fns, Models: programsById}, nil
 }
 
-// UpdateMachine /points/updateMachine check [ true true false ] access [ true false false false POST ]
-func (a *Actions) UpdateMachine(state state.IState, input inputs_points.UpdateMachineInput) (any, error) {
+// UpdateProgram /points/updateProgram check [ true true false ] access [ true false false false POST ]
+func (a *Actions) UpdateProgram(state state.IState, input inputs_points.UpdateProgramInput) (any, error) {
 	if state.Trx().GetLink("admin::"+state.Info().PointId()+"::"+state.Info().UserId()) != "true" {
-		if meta, err := state.Trx().GetJson("PointAccess::"+state.Info().PointId()+"::"+state.Info().UserId(), "metadata"); err != nil || !meta["updateMachine"].(bool) {
+		if meta, err := state.Trx().GetJson("PointAccess::"+state.Info().PointId()+"::"+state.Info().UserId(), "metadata"); err != nil || !meta["updateProgram"].(bool) {
 			return nil, errors.New("access not permitted")
 		}
 	}
@@ -288,143 +288,27 @@ func (a *Actions) UpdateMachine(state state.IState, input inputs_points.UpdateMa
 	locker, _ := a.Locks.Get(state.Info().PointId())
 	locker.Lock.Lock()
 	defer locker.Lock.Unlock()
-	if !trx.HasObj("App", input.AppId) {
-		return nil, errors.New("app not found")
+	if !trx.HasObj("App", input.MachineId) {
+		return nil, errors.New("machine not found")
 	}
-	machineModel := model.Machine{Id: input.AppId}.Pull(trx)
-	trx.PutJson("FnMeta::"+state.Info().PointId()+"::"+input.AppId+"::"+input.MachineMeta.MachineId+"::"+input.MachineMeta.Identifier, "metadata", input.MachineMeta.Metadata, false)
-	memberMachine := model.User{Id: input.MachineMeta.MachineId}.Pull(trx)
-	program := model.Program{MachineId: input.MachineMeta.MachineId}.Pull(trx)
+	programModel := model.Machine{Id: input.MachineId}.Pull(trx)
+	trx.PutJson("FnMeta::"+state.Info().PointId()+"::"+input.MachineId+"::"+input.ProgramMeta.ProgramId+"::"+input.ProgramMeta.Identifier, "metadata", input.ProgramMeta.Metadata, false)
+	memberProgram := model.User{Id: input.ProgramMeta.ProgramId}.Pull(trx)
+	program := model.Program{MachineId: input.ProgramMeta.ProgramId}.Pull(trx)
 	fn := updates_points.Fn{
-		UserId:     memberMachine.Id,
-		Typ:        memberMachine.Typ,
-		Username:   memberMachine.Username,
-		PublicKey:  memberMachine.PublicKey,
-		MachineId:  program.AppId,
+		UserId:     memberProgram.Id,
+		Typ:        memberProgram.Typ,
+		Username:   memberProgram.Username,
+		PublicKey:  memberProgram.PublicKey,
+		ProgramId:  program.AppId,
 		Runtime:    program.Runtime,
 		Path:       program.Path,
 		Comment:    program.Comment,
-		Metadata:   input.MachineMeta.Metadata,
-		Identifier: input.MachineMeta.Identifier,
+		Metadata:   input.ProgramMeta.Metadata,
+		Identifier: input.ProgramMeta.Identifier,
 	}
 	future.Async(func() {
-		a.App.Tools().Signaler().SignalGroup("points/updateMachine", state.Info().PointId(), updates_points.UpdateApp{PointId: state.Info().PointId(), Machine: machineModel, Program: fn}, true, []string{state.Info().UserId()})
-	}, false)
-	return outputs_points.AddMemberOutput{}, nil
-}
-
-// RemoveApp /points/removeApp check [ true true false ] access [ true false false false POST ]
-func (a *Actions) RemoveApp(state state.IState, input inputs_points.RemoveAppInput) (any, error) {
-	if state.Trx().GetLink("admin::"+state.Info().PointId()+"::"+state.Info().UserId()) != "true" {
-		if meta, err := state.Trx().GetJson("PointAccess::"+state.Info().PointId()+"::"+state.Info().UserId(), "metadata"); err != nil || !meta["removeApp"].(bool) {
-			return nil, errors.New("access not permitted")
-		}
-	}
-	trx := state.Trx()
-	a.Locks.SetIfAbsent(state.Info().PointId(), &LockHolder{})
-	locker, _ := a.Locks.Get(state.Info().PointId())
-	locker.Lock.Lock()
-	defer locker.Lock.Unlock()
-	if !trx.HasObj("App", input.AppId) {
-		return nil, errors.New("app not found")
-	}
-	machineModel := model.Machine{Id: input.AppId}.Pull(trx)
-	machines, err := model.User{}.List(trx, "appMachines::"+input.AppId+"::", map[string]string{})
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
-	programs, err := model.Program{}.List(trx, "appMachines::"+input.AppId+"::")
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
-	programMap := map[string]model.Program{}
-	for _, program := range programs {
-		programMap[program.MachineId] = program
-	}
-	macArr := strings.Split(trx.GetLink("pointAppMachines::"+state.Info().PointId()+"::"+machineModel.Id), ",")
-	for _, machine := range machines {
-		if slices.Contains(macArr, machine.Id) {
-			trx.DelKey("link::member::" + state.Info().PointId() + "::" + machine.Id)
-			trx.DelKey("link::memberof::" + machine.Id + "::" + state.Info().PointId())
-			trx.DelJson("PointAccess::"+state.Info().PointId()+"::"+machine.Id, "metadata")
-			a.App.Tools().Signaler().LeaveGroup(state.Info().PointId(), machine.Id)
-		}
-	}
-	prefix := "pointAppMachine::" + state.Info().PointId() + "::" + machineModel.Id + "::"
-	arr, err := trx.GetLinksList(prefix, 0, 1000)
-	if err != nil {
-		log.Println(err)
-	} else {
-		for _, key := range arr {
-			parts := strings.Split(key[len(prefix):], "::")
-			trx.DelJson("FnMeta::"+state.Info().PointId()+"::"+input.AppId+"::"+parts[0]+"::"+parts[1], "metadata")
-			trx.DelKey(key)
-		}
-	}
-	trx.DelKey("link::pointApp::" + state.Info().PointId() + "::" + machineModel.Id)
-	future.Async(func() {
-		a.App.Tools().Signaler().SignalGroup("points/removeApp", state.Info().PointId(), updates_points.AddApp{PointId: state.Info().PointId(), Machine: machineModel}, true, []string{state.Info().UserId()})
-	}, false)
-	return outputs_points.AddMemberOutput{}, nil
-}
-
-// AddMachine /points/addMachine check [ true true false ] access [ true false false false POST ]
-func (a *Actions) AddMachine(state state.IState, input inputs_points.AddMachineInput) (any, error) {
-	if state.Trx().GetLink("admin::"+state.Info().PointId()+"::"+state.Info().UserId()) != "true" {
-		if meta, err := state.Trx().GetJson("PointAccess::"+state.Info().PointId()+"::"+state.Info().UserId(), "metadata"); err != nil || !meta["addMachine"].(bool) {
-			return nil, errors.New("access not permitted")
-		}
-	}
-	trx := state.Trx()
-	a.Locks.SetIfAbsent(state.Info().PointId(), &LockHolder{})
-	locker, _ := a.Locks.Get(state.Info().PointId())
-	locker.Lock.Lock()
-	defer locker.Lock.Unlock()
-	if !trx.HasObj("App", input.AppId) {
-		return nil, errors.New("app not found")
-	}
-	machineModel := model.Machine{Id: input.AppId}.Pull(trx)
-	memberMachine := model.User{Id: input.MachineMeta.MachineId}.Pull(trx)
-	program := model.Program{MachineId: input.MachineMeta.MachineId}.Pull(trx)
-	meta, err := trx.GetJson("MachineMeta::"+program.MachineId, "metadata")
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
-	maps.Copy(input.MachineMeta.Metadata, meta)
-	acc := map[string]bool{}
-	for k, v := range access {
-		if v2, ok := input.MachineMeta.Access[k]; ok {
-			acc[k] = v2
-		} else {
-			acc[k] = v
-		}
-	}
-	fn := updates_points.Fn{
-		UserId:     memberMachine.Id,
-		Typ:        memberMachine.Typ,
-		Username:   memberMachine.Username,
-		PublicKey:  memberMachine.PublicKey,
-		MachineId:  program.AppId,
-		Runtime:    program.Runtime,
-		Path:       program.Path,
-		Comment:    program.Comment,
-		Identifier: input.MachineMeta.Identifier,
-		Metadata:   input.MachineMeta.Metadata,
-		Access:     acc,
-	}
-	if arr, err := trx.GetLinksList("pointAppMachine::"+state.Info().PointId()+"::"+fn.MachineId+"::"+fn.UserId+"::", 0, 100); err != nil || len(arr) == 0 {
-		trx.PutJson("PointAccess::"+state.Info().PointId()+"::"+fn.UserId, "metadata", acc, false)
-	}
-	trx.PutJson("FnMeta::"+state.Info().PointId()+"::"+fn.MachineId+"::"+fn.UserId+"::"+input.MachineMeta.Identifier, "metadata", input.MachineMeta.Metadata, true)
-	trx.PutLink("member::"+state.Info().PointId()+"::"+input.MachineMeta.MachineId, "true")
-	trx.PutLink("memberof::"+input.MachineMeta.MachineId+"::"+state.Info().PointId(), "true")
-	trx.PutLink("pointAppMachine::"+state.Info().PointId()+"::"+input.AppId+"::"+input.MachineMeta.MachineId+"::"+input.MachineMeta.Identifier, "true")
-	a.App.Tools().Signaler().JoinGroup(state.Info().PointId(), input.MachineMeta.MachineId)
-	future.Async(func() {
-		a.App.Tools().Signaler().SignalGroup("points/addMachine", state.Info().PointId(), updates_points.AddMachine{PointId: state.Info().PointId(), Machine: machineModel, Program: fn}, true, []string{})
+		a.App.Tools().Signaler().SignalGroup("points/updateProgram", state.Info().PointId(), updates_points.UpdateMachine{PointId: state.Info().PointId(), Model: programModel, Program: fn}, true, []string{state.Info().UserId()})
 	}, false)
 	return outputs_points.AddMemberOutput{}, nil
 }
@@ -441,36 +325,152 @@ func (a *Actions) RemoveMachine(state state.IState, input inputs_points.RemoveMa
 	locker, _ := a.Locks.Get(state.Info().PointId())
 	locker.Lock.Lock()
 	defer locker.Lock.Unlock()
-	if !trx.HasObj("App", input.AppId) {
-		return nil, errors.New("app not found")
+	if !trx.HasObj("App", input.MachineId) {
+		return nil, errors.New("machine not found")
 	}
-	if trx.GetLink("pointAppMachine::"+state.Info().PointId()+"::"+input.AppId+"::"+input.MachineId+"::"+input.Identifier) == "" {
-		return nil, errors.New("machine with this identifier does not exist in point")
+	programModel := model.Machine{Id: input.MachineId}.Pull(trx)
+	programs, err := model.User{}.List(trx, "machinePrograms::"+input.MachineId+"::", map[string]string{})
+	if err != nil {
+		log.Println(err)
+		return nil, err
 	}
-	machineModel := model.Machine{Id: input.AppId}.Pull(trx)
-	memberMachine := model.User{Id: input.MachineId}.Pull(trx)
-	program := model.Program{MachineId: input.MachineId}.Pull(trx)
+	programModels, err := model.Program{}.List(trx, "machinePrograms::"+input.MachineId+"::")
+	if err != nil {
+		log.Println(err)
+		return nil, err
+	}
+	programMap := map[string]model.Program{}
+	for _, program := range programModels {
+		programMap[program.MachineId] = program
+	}
+	macArr := strings.Split(trx.GetLink("pointMachinePrograms::"+state.Info().PointId()+"::"+programModel.Id), ",")
+	for _, program := range programs {
+		if slices.Contains(macArr, program.Id) {
+			trx.DelKey("link::member::" + state.Info().PointId() + "::" + program.Id)
+			trx.DelKey("link::memberof::" + program.Id + "::" + state.Info().PointId())
+			trx.DelJson("PointAccess::"+state.Info().PointId()+"::"+program.Id, "metadata")
+			a.App.Tools().Signaler().LeaveGroup(state.Info().PointId(), program.Id)
+		}
+	}
+	prefix := "pointMachineProgram::" + state.Info().PointId() + "::" + programModel.Id + "::"
+	arr, err := trx.GetLinksList(prefix, 0, 1000)
+	if err != nil {
+		log.Println(err)
+	} else {
+		for _, key := range arr {
+			parts := strings.Split(key[len(prefix):], "::")
+			trx.DelJson("FnMeta::"+state.Info().PointId()+"::"+input.MachineId+"::"+parts[0]+"::"+parts[1], "metadata")
+			trx.DelKey(key)
+		}
+	}
+	trx.DelKey("link::pointMachine::" + state.Info().PointId() + "::" + programModel.Id)
+	future.Async(func() {
+		a.App.Tools().Signaler().SignalGroup("points/removeMachine", state.Info().PointId(), updates_points.AddMachine{PointId: state.Info().PointId(), Program: programModel}, true, []string{state.Info().UserId()})
+	}, false)
+	return outputs_points.AddMemberOutput{}, nil
+}
+
+// AddProgram /points/addProgram check [ true true false ] access [ true false false false POST ]
+func (a *Actions) AddProgram(state state.IState, input inputs_points.AddProgramInput) (any, error) {
+	if state.Trx().GetLink("admin::"+state.Info().PointId()+"::"+state.Info().UserId()) != "true" {
+		if meta, err := state.Trx().GetJson("PointAccess::"+state.Info().PointId()+"::"+state.Info().UserId(), "metadata"); err != nil || !meta["addProgram"].(bool) {
+			return nil, errors.New("access not permitted")
+		}
+	}
+	trx := state.Trx()
+	a.Locks.SetIfAbsent(state.Info().PointId(), &LockHolder{})
+	locker, _ := a.Locks.Get(state.Info().PointId())
+	locker.Lock.Lock()
+	defer locker.Lock.Unlock()
+	if !trx.HasObj("App", input.MachineId) {
+		return nil, errors.New("machine not found")
+	}
+	programModel := model.Machine{Id: input.MachineId}.Pull(trx)
+	memberProgram := model.User{Id: input.ProgramMeta.ProgramId}.Pull(trx)
+	program := model.Program{MachineId: input.ProgramMeta.ProgramId}.Pull(trx)
+	meta, err := trx.GetJson("MachineMeta::"+program.MachineId, "metadata")
+	if err != nil {
+		log.Println(err)
+		return nil, err
+	}
+	maps.Copy(input.ProgramMeta.Metadata, meta)
+	acc := map[string]bool{}
+	for k, v := range access {
+		if v2, ok := input.ProgramMeta.Access[k]; ok {
+			acc[k] = v2
+		} else {
+			acc[k] = v
+		}
+	}
 	fn := updates_points.Fn{
-		UserId:     memberMachine.Id,
-		Typ:        memberMachine.Typ,
-		Username:   memberMachine.Username,
-		PublicKey:  memberMachine.PublicKey,
-		MachineId:  program.AppId,
+		UserId:     memberProgram.Id,
+		Typ:        memberProgram.Typ,
+		Username:   memberProgram.Username,
+		PublicKey:  memberProgram.PublicKey,
+		ProgramId:  program.AppId,
+		Runtime:    program.Runtime,
+		Path:       program.Path,
+		Comment:    program.Comment,
+		Identifier: input.ProgramMeta.Identifier,
+		Metadata:   input.ProgramMeta.Metadata,
+		Access:     acc,
+	}
+	if arr, err := trx.GetLinksList("pointMachineProgram::"+state.Info().PointId()+"::"+fn.ProgramId+"::"+fn.UserId+"::", 0, 100); err != nil || len(arr) == 0 {
+		trx.PutJson("PointAccess::"+state.Info().PointId()+"::"+fn.UserId, "metadata", acc, false)
+	}
+	trx.PutJson("FnMeta::"+state.Info().PointId()+"::"+fn.ProgramId+"::"+fn.UserId+"::"+input.ProgramMeta.Identifier, "metadata", input.ProgramMeta.Metadata, true)
+	trx.PutLink("member::"+state.Info().PointId()+"::"+input.ProgramMeta.ProgramId, "true")
+	trx.PutLink("memberof::"+input.ProgramMeta.ProgramId+"::"+state.Info().PointId(), "true")
+	trx.PutLink("pointMachineProgram::"+state.Info().PointId()+"::"+input.MachineId+"::"+input.ProgramMeta.ProgramId+"::"+input.ProgramMeta.Identifier, "true")
+	a.App.Tools().Signaler().JoinGroup(state.Info().PointId(), input.ProgramMeta.ProgramId)
+	future.Async(func() {
+		a.App.Tools().Signaler().SignalGroup("points/addProgram", state.Info().PointId(), updates_points.AddProgram{PointId: state.Info().PointId(), Model: programModel, Program: fn}, true, []string{})
+	}, false)
+	return outputs_points.AddMemberOutput{}, nil
+}
+
+// RemoveProgram /points/removeProgram check [ true true false ] access [ true false false false POST ]
+func (a *Actions) RemoveProgram(state state.IState, input inputs_points.RemoveProgramInput) (any, error) {
+	if state.Trx().GetLink("admin::"+state.Info().PointId()+"::"+state.Info().UserId()) != "true" {
+		if meta, err := state.Trx().GetJson("PointAccess::"+state.Info().PointId()+"::"+state.Info().UserId(), "metadata"); err != nil || !meta["removeProgram"].(bool) {
+			return nil, errors.New("access not permitted")
+		}
+	}
+	trx := state.Trx()
+	a.Locks.SetIfAbsent(state.Info().PointId(), &LockHolder{})
+	locker, _ := a.Locks.Get(state.Info().PointId())
+	locker.Lock.Lock()
+	defer locker.Lock.Unlock()
+	if !trx.HasObj("App", input.MachineId) {
+		return nil, errors.New("machine not found")
+	}
+	if trx.GetLink("pointMachineProgram::"+state.Info().PointId()+"::"+input.MachineId+"::"+input.ProgramId+"::"+input.Identifier) == "" {
+		return nil, errors.New("program with this identifier does not exist in point")
+	}
+	programModel := model.Machine{Id: input.MachineId}.Pull(trx)
+	memberProgram := model.User{Id: input.ProgramId}.Pull(trx)
+	program := model.Program{MachineId: input.ProgramId}.Pull(trx)
+	fn := updates_points.Fn{
+		UserId:     memberProgram.Id,
+		Typ:        memberProgram.Typ,
+		Username:   memberProgram.Username,
+		PublicKey:  memberProgram.PublicKey,
+		ProgramId:  program.AppId,
 		Runtime:    program.Runtime,
 		Path:       program.Path,
 		Comment:    program.Comment,
 		Identifier: input.Identifier,
 	}
-	trx.DelJson("FnMeta::"+state.Info().PointId()+"::"+fn.MachineId+"::"+fn.UserId+"::"+input.Identifier, "metadata")
-	trx.DelKey("link::pointAppMachine::" + state.Info().PointId() + "::" + input.AppId + "::" + input.MachineId + "::" + input.Identifier)
-	if arr, err := trx.GetLinksList("pointAppMachine::"+state.Info().PointId()+"::"+input.AppId+"::"+input.MachineId+"::", 0, 100); err == nil && len(arr) == 0 {
-		trx.DelKey("link::member::" + state.Info().PointId() + "::" + input.MachineId)
-		trx.DelKey("link::memberof::" + input.MachineId + "::" + state.Info().PointId())
-		trx.DelJson("PointAccess::"+state.Info().PointId()+"::"+input.MachineId, "metadata")
-		a.App.Tools().Signaler().LeaveGroup(state.Info().PointId(), input.MachineId)
+	trx.DelJson("FnMeta::"+state.Info().PointId()+"::"+fn.ProgramId+"::"+fn.UserId+"::"+input.Identifier, "metadata")
+	trx.DelKey("link::pointMachineProgram::" + state.Info().PointId() + "::" + input.MachineId + "::" + input.ProgramId + "::" + input.Identifier)
+	if arr, err := trx.GetLinksList("pointMachineProgram::"+state.Info().PointId()+"::"+input.MachineId+"::"+input.ProgramId+"::", 0, 100); err == nil && len(arr) == 0 {
+		trx.DelKey("link::member::" + state.Info().PointId() + "::" + input.ProgramId)
+		trx.DelKey("link::memberof::" + input.ProgramId + "::" + state.Info().PointId())
+		trx.DelJson("PointAccess::"+state.Info().PointId()+"::"+input.ProgramId, "metadata")
+		a.App.Tools().Signaler().LeaveGroup(state.Info().PointId(), input.ProgramId)
 	}
 	future.Async(func() {
-		a.App.Tools().Signaler().SignalGroup("points/removeMachine", state.Info().PointId(), updates_points.AddMachine{PointId: state.Info().PointId(), Machine: machineModel, Program: fn}, true, []string{})
+		a.App.Tools().Signaler().SignalGroup("points/removeProgram", state.Info().PointId(), updates_points.AddProgram{PointId: state.Info().PointId(), Model: programModel, Program: fn}, true, []string{})
 	}, false)
 	return outputs_points.AddMemberOutput{}, nil
 }
@@ -555,13 +555,13 @@ func (a *Actions) UpdateMemberAccess(state state.IState, input inputs_points.Upd
 	return map[string]any{}, nil
 }
 
-// UpdateMachineAccess /points/updateMachineAccess check [ true true true ] access [ true false false false POST ]
-func (a *Actions) UpdateMachineAccess(state state.IState, input inputs_points.UpdateMachineAccessInput) (any, error) {
+// UpdateProgramAccess /points/updateProgramAccess check [ true true true ] access [ true false false false POST ]
+func (a *Actions) UpdateProgramAccess(state state.IState, input inputs_points.UpdateProgramAccessInput) (any, error) {
 	if state.Trx().GetLink("admin::"+state.Info().PointId()+"::"+state.Info().UserId()) != "true" {
 		return nil, errors.New("access not permitted")
 	}
 	trx := state.Trx()
-	trx.PutJson("PointAccess::"+state.Info().PointId()+"::"+input.MachineId, "metadata", input.Access, true)
+	trx.PutJson("PointAccess::"+state.Info().PointId()+"::"+input.ProgramId, "metadata", input.Access, true)
 	return map[string]any{}, nil
 }
 
@@ -770,13 +770,13 @@ func (a *Actions) Create(state state.IState, input inputs_points.CreateInput) (a
 				}
 				acc := map[string]bool{}
 				maps.Copy(acc, access)
-				if arr, err := trx.GetLinksList("pointAppMachine::"+point.Id+"::"+program.AppId+"::"+program.MachineId+"::", 0, 100); err != nil || len(arr) == 0 {
+				if arr, err := trx.GetLinksList("pointMachineProgram::"+point.Id+"::"+program.AppId+"::"+program.MachineId+"::", 0, 100); err != nil || len(arr) == 0 {
 					trx.PutJson("PointAccess::"+point.Id+"::"+program.MachineId, "metadata", acc, false)
 				}
 				trx.PutJson("FnMeta::"+point.Id+"::"+program.AppId+"::"+program.MachineId+"::"+"0", "metadata", meta, true)
 				trx.PutLink("member::"+point.Id+"::"+program.MachineId, "true")
 				trx.PutLink("memberof::"+program.MachineId+"::"+point.Id, "true")
-				trx.PutLink("pointAppMachine::"+point.Id+"::"+program.AppId+"::"+program.MachineId+"::"+"0", "true")
+				trx.PutLink("pointMachineProgram::"+point.Id+"::"+program.AppId+"::"+program.MachineId+"::"+"0", "true")
 				if isAdmin {
 					trx.PutLink("admin::"+point.Id+"::"+userId, "true")
 					trx.PutLink("adminof::"+userId+"::"+point.Id, "true")

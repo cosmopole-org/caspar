@@ -1,3 +1,3 @@
 package outputs_points
 
-type JoinOutput struct {}
+type JoinOutput struct{}

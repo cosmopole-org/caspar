@@ -2,20 +2,20 @@ package inputs_points
 
 import "kasper/src/shell/utils/origin"
 
-type UpdateMachineInput struct {
+type UpdateProgramInput struct {
 	PointId     string      `json:"pointId" validate:"required"`
-	AppId       string      `json:"appId" validate:"required"`
-	MachineMeta MachineMeta `json:"machineMeta" validate:"required"`
+	MachineId   string      `json:"machineId" validate:"required"`
+	ProgramMeta ProgramMeta `json:"programMeta" validate:"required"`
 }
 
-func (d UpdateMachineInput) GetData() any {
+func (d UpdateProgramInput) GetData() any {
 	return "dummy"
 }
 
-func (d UpdateMachineInput) GetPointId() string {
+func (d UpdateProgramInput) GetPointId() string {
 	return d.PointId
 }
 
-func (d UpdateMachineInput) Origin() string {
+func (d UpdateProgramInput) Origin() string {
 	return origin.FindOriginLocal(d.PointId)
 }
