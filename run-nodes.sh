@@ -1174,8 +1174,14 @@ local_start_node() {
 
   [[ -f "$env_file" ]] && { set -a; source "$env_file"; set +a; }
 
+  # caspar-node links against libwasmedge.so.0 which ships in dist/lib/wasmedge/.
+  # Prepend that directory to LD_LIBRARY_PATH so the dynamic linker finds it
+  # without needing a system-wide ldconfig run.
+  local _wasm_lib="$REPO_DIR/dist/lib/wasmedge"
+  local _ld_path="${_wasm_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+
   info "Starting node$n locally (TCP=${NODE_TCP[$n]})…"
-  BABBLE_DIR="$node_dir/babble" "$BINARY" >> "$log_file" 2>&1 &
+  BABBLE_DIR="$node_dir/babble" LD_LIBRARY_PATH="$_ld_path" "$BINARY" >> "$log_file" 2>&1 &
   echo $! > "$node_dir/caspar.pid"
   echo $!
 }
