@@ -1025,6 +1025,17 @@ else
   fi
   [[ -f "$BINARY" ]] || die "Build failed: binary not found at $BINARY"
   ok "Binary ready: $BINARY ($(ls -lh "$BINARY" | awk '{print $5}'))"
+
+  # Local mode: caspar-node hardcodes /app/scripts/shardchain.sh. Create the
+  # directory and symlink the script from the repo so the binary can find it.
+  # This is a no-op if the symlink already exists.
+  local _shard_script="$REPO_DIR/node/scripts/shardchain.sh"
+  if [[ -f "$_shard_script" ]]; then
+    mkdir -p /app/scripts 2>/dev/null || true
+    ln -sf "$_shard_script" /app/scripts/shardchain.sh 2>/dev/null \
+      && ok "Linked /app/scripts/shardchain.sh → $_shard_script" \
+      || warn "Could not create /app/scripts/shardchain.sh — shard init may fail"
+  fi
 fi
 
 # ─── Helper: wait for a TCP port ────────────────────────────────────────────
@@ -1080,6 +1091,9 @@ _generate_node_config() {
     HOME="$tmp_home" "$keygen_bin" >/dev/null 2>&1 || true
     if [[ -f "$tmp_home/.babble/priv_key" ]]; then
       cp "$tmp_home/.babble/priv_key" "$node_dir/babble/priv_key"
+      # key.pub is needed by shardchain.sh — copy it alongside priv_key
+      [[ -f "$tmp_home/.babble/key.pub" ]] && \
+        cp "$tmp_home/.babble/key.pub" "$node_dir/babble/key.pub"
     else
       # keygen failed (race on $HOME/.babble?) — fall back to random key
       python3 -c "import secrets; print(secrets.token_hex(32), end='')" \
@@ -1092,6 +1106,33 @@ _generate_node_config() {
     warn "caspar-keygen not found at $keygen_bin — generating random babble key"
     python3 -c "import secrets; print(secrets.token_hex(32), end='')" \
       > "$node_dir/babble/priv_key"
+  fi
+
+  # ── peers.genesis.json (required by shardchain.sh in local / --no-docker mode) ─
+  # shardchain.sh copies this file into each chain shard directory as peers.json
+  # so that Babble can discover validators on startup.  Without it babble.init()
+  # fails with "No such file or directory" and creature deployment times out.
+  #
+  # For IS_HEAD (single-node / triple-node head): the file lists only this node.
+  # Non-head nodes in triple mode use peersMode=3 and fetch from node1's entity
+  # API (via the ENTITY_API_URL override set in local_start_node).
+  local pub_key_file="$node_dir/babble/key.pub"
+  if [[ -f "$pub_key_file" ]]; then
+    local tcp_port_early=${NODE_TCP[$n]}
+    local chain_port_early=$((tcp_port_early + 4))
+    local pub_key_upper
+    pub_key_upper=$(tr '[:lower:]' '[:upper:]' < "$pub_key_file")
+    python3 - "$node_dir/babble/peers.genesis.json" \
+              "127.0.0.1:${chain_port_early}" \
+              "0X${pub_key_upper}" \
+              "node${n}" <<'PEERSPY'
+import json, sys
+out_path, net_addr, pub_key_hex, moniker = sys.argv[1:]
+with open(out_path, 'w') as f:
+    json.dump([{"NetAddr": net_addr, "PubKeyHex": pub_key_hex, "Moniker": moniker}], f)
+    f.write('\n')
+PEERSPY
+    ok "node${n} babble peers.genesis.json generated"
   fi
 
   # ── RSA identity key (OWNER_PRIVATE_KEY, PKCS#8 PEM) ───────────────────────
@@ -1181,7 +1222,20 @@ local_start_node() {
   local _ld_path="${_wasm_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 
   info "Starting node$n locally (TCP=${NODE_TCP[$n]})…"
-  BABBLE_DIR="$node_dir/babble" LD_LIBRARY_PATH="$_ld_path" "$BINARY" >> "$log_file" 2>&1 &
+  # Override every /app/data/* Docker container path to the actual node directory.
+  # Also set ENTITY_API_URL so shardchain.sh (peersMode=3 on non-head nodes) fetches
+  # peers from node1's local entity API instead of the external production server.
+  STORAGE_ROOT_PATH="$node_dir/storage" \
+  BASE_DB_PATH="$node_dir/db" \
+  APPLET_DB_PATH="$node_dir/applet" \
+  SEARCH_INDEX_PATH="$node_dir/search" \
+  STORE_LOGS_DB="$node_dir/store_logs" \
+  TELEMETRY_DB_PATH="$node_dir/telemetry" \
+  BABBLE_DIR="$node_dir/babble" \
+  BABBLE_DATA_DIR="$node_dir/babble" \
+  ENTITY_API_URL="http://127.0.0.1" \
+  LD_LIBRARY_PATH="$_ld_path" \
+  "$BINARY" >> "$log_file" 2>&1 &
   echo $! > "$node_dir/caspar.pid"
   echo $!
 }
