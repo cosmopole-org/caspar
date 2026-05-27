@@ -1029,11 +1029,11 @@ else
   # Local mode: caspar-node hardcodes /app/scripts/shardchain.sh. Create the
   # directory and symlink the script from the repo so the binary can find it.
   # This is a no-op if the symlink already exists.
-  local _shard_script="$REPO_DIR/node/scripts/shardchain.sh"
-  if [[ -f "$_shard_script" ]]; then
+  _shard_script_src="$REPO_DIR/node/scripts/shardchain.sh"
+  if [[ -f "$_shard_script_src" ]]; then
     mkdir -p /app/scripts 2>/dev/null || true
-    ln -sf "$_shard_script" /app/scripts/shardchain.sh 2>/dev/null \
-      && ok "Linked /app/scripts/shardchain.sh → $_shard_script" \
+    ln -sf "$_shard_script_src" /app/scripts/shardchain.sh 2>/dev/null \
+      && ok "Linked /app/scripts/shardchain.sh → $_shard_script_src" \
       || warn "Could not create /app/scripts/shardchain.sh — shard init may fail"
   fi
 fi
