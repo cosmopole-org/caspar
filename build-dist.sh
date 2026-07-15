@@ -112,7 +112,12 @@ step "Step 2: WasmEdge runtime ($WASMEDGE_VERSION)"
 # libwasmedge.so.<SOVERSION> where SOVERSION differs from the project version.
 WASMEDGE_LIB_FILE=""
 for search_dir in "$WASMEDGE_HOME/lib" "/usr/local/lib" "/usr/lib"; do
-  found=$(find "$search_dir" -maxdepth 2 -name "libwasmedge.so.*.*" 2>/dev/null | head -1)
+  # Skip absent dirs BEFORE find: under `set -euo pipefail` a find on a
+  # missing path exits 1 and aborts the whole script — which killed every
+  # run on a virgin machine (no ~/.wasmedge yet) before the self-install
+  # branch below could ever execute.
+  [[ -d "$search_dir" ]] || continue
+  found=$(find "$search_dir" -maxdepth 2 -name "libwasmedge.so.*.*" 2>/dev/null | head -1 || true)
   if [[ -n "$found" ]]; then
     # Verify the corresponding include dir exists — wasmedge-sys needs headers too.
     found_inc="${search_dir%/lib*}/include"
