@@ -1527,6 +1527,21 @@ impl Vmm {
                             store.delete(t);
                         }
                         t.del_key(&format!("Json::StoreMeta::{}::metadata", store_id_owned));
+                        // Membership links outlive the object unless we drop them:
+                        // listStores walks hasaccess, and a later getStore still
+                        // echoes the requested id, which is how a deleted space
+                        // came back as an untitled project.
+                        let prefix = format!("onaccess::{}::", store_id_owned);
+                        let members = t.get_links_list(&prefix, -1, -1, &[]).unwrap_or_default();
+                        for k in members {
+                            let member_id = k.strip_prefix(&prefix).unwrap_or(&k).to_string();
+                            if member_id.is_empty() {
+                                continue;
+                            }
+                            t.del_key(&format!("link::onaccess::{}::{}", store_id_owned, member_id));
+                            t.del_key(&format!("link::hasaccess::{}::{}", member_id, store_id_owned));
+                            t.del_key(&format!("link::creatorof::{}::{}", member_id, store_id_owned));
+                        }
                         Ok(())
                     }),
                 );
