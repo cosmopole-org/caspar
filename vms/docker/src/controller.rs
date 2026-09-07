@@ -433,6 +433,53 @@ impl DockerVmController {
         }))
     }
 
+    /// Permanently destroy a docker VM: the container is removed (never just
+    /// stopped), its persistent `/data` dir is dropped, and — when the caller
+    /// asks with `removeImage` — the image built for this entity goes too.
+    ///
+    /// Terminate's `purge` already removes the container and the dir; delete
+    /// differs in that it is unconditional (a delete is never a suspend) and
+    /// reaches the image, which no terminate does because a suspended VM must
+    /// still have something to resume from.
+    fn delete_vm(&self, packet: &JsonValue) -> Result<JsonValue, String> {
+        let machine_id = packet["machineId"].as_str().unwrap_or("");
+        if machine_id.is_empty() {
+            return Err("machineId is required".to_string());
+        }
+        let mut purge_packet = packet.clone();
+        if let Some(obj) = purge_packet.as_object_mut() {
+            obj.insert("purge".to_string(), JsonValue::Bool(true));
+        }
+        let terminated = self.terminate_vm(&purge_packet)?;
+
+        // The image is per (machine, entity), not per VM, so it is only
+        // removed when the caller says the entity itself is going away —
+        // deleting one instance must not break its siblings.
+        let mut image_removed = false;
+        if packet["removeImage"].as_bool().unwrap_or(false) {
+            let entity_id = packet["entityId"]
+                .as_str()
+                .or_else(|| packet["imageName"].as_str())
+                .unwrap_or("main");
+            let image_ref = packet["imageRef"]
+                .as_str()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| docker_image_ref(machine_id, entity_id));
+            let removed = self.with_async(self.docker.remove_image(&image_ref, None, None));
+            image_removed = removed.is_ok();
+        }
+
+        Ok(json!({
+            "ok": true,
+            "runtime": "docker",
+            "machineId": machine_id,
+            "vmId": packet["vmId"].as_str().unwrap_or("main"),
+            "deleted": true,
+            "imageRemoved": image_removed,
+            "terminate": terminated,
+        }))
+    }
+
     /// Inspect the concrete container backing a standalone program entity.
     fn status_vm(&self, packet: &JsonValue) -> Result<JsonValue, String> {
         let machine_id = packet["machineId"].as_str().unwrap_or("");
@@ -881,6 +928,10 @@ impl VmPlugin for DockerVmPlugin {
         self.with_controller(|c| c.terminate_vm(packet))
     }
 
+    fn delete_vm(&self, packet: &JsonValue) -> Result<JsonValue, String> {
+        self.with_controller(|c| c.delete_vm(packet))
+    }
+
     fn status_vm(&self, packet: &JsonValue) -> Result<JsonValue, String> {
         self.with_controller(|c| c.status_vm(packet))
     }
@@ -985,6 +1036,20 @@ impl VmPlugin for DockerVmPlugin {
             "containerName": container_name,
             "vmId": vm_id,
         }))
+    }
+
+    /// Host-call delete requests carry the same container identity as a
+    /// terminate, plus the flags that make the removal unconditional and the
+    /// caller's choice about the entity's image.
+    fn build_delete_request(&self, input: &JsonValue) -> Result<JsonValue, String> {
+        let mut packet = self.build_terminate_request(input)?;
+        if let Some(obj) = packet.as_object_mut() {
+            obj.insert("type".to_string(), JsonValue::String("deleteVm".to_string()));
+            obj.insert("purge".to_string(), JsonValue::Bool(true));
+            obj.insert("delete".to_string(), JsonValue::Bool(true));
+            obj.insert("removeImage".to_string(), input["removeImage"].clone());
+        }
+        Ok(packet)
     }
 }
 

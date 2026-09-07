@@ -39,6 +39,14 @@ impl VmPlugin for JavascriptVmController {
         registry::terminate_on(&self.backing_runtime()?, packet)
     }
 
+    /// The javascript runtime executes on a backing runtime (its transpiled
+    /// MASM program), so a delete is delegated there exactly as run and
+    /// terminate are — there is no javascript-side instance of its own to
+    /// destroy.
+    fn delete_vm(&self, packet: &JsonValue) -> Result<JsonValue, String> {
+        registry::delete_on(&self.backing_runtime()?, packet)
+    }
+
     fn exec_vm(&self, packet: &JsonValue) -> Result<JsonValue, String> {
         let script_path = packet["astPath"].as_str().unwrap_or("");
         if script_path.is_empty() {

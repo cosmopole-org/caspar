@@ -109,6 +109,44 @@ impl VmPlugin for ElpifyVmController {
         Ok(json!({"ok": true, "runtime": "elpify", "machineId": machine_id}))
     }
 
+    /// A delete stops every elpify VM of this machine and disposes of the
+    /// lifecycle transaction and execution context the run left behind; with
+    /// `removeArtifact` the transpiled MASM program is dropped too, so the
+    /// program has to be rebuilt rather than re-executed from the deleted
+    /// VM's artifact.
+    fn delete_vm(&self, packet: &JsonValue) -> Result<JsonValue, String> {
+        let machine_id = packet["machineId"].as_str().unwrap_or("");
+        if machine_id.is_empty() {
+            return Err("machineId is required".to_string());
+        }
+        let vm_id = packet["vmId"].as_str().unwrap_or("main");
+        terminate_elpify_vms(machine_id);
+        if let Some(h) = caspar_vm_sdk::host::host() {
+            h.end_vm_json_trx(vm_id);
+            h.commit_vm_buffer(vm_id);
+            h.unregister_vm_context(vm_id);
+        }
+        let mut artifact_removed = false;
+        if packet["removeArtifact"].as_bool().unwrap_or(false) {
+            let masm_path = packet["masmPath"]
+                .as_str()
+                .or_else(|| packet["astPath"].as_str())
+                .unwrap_or("")
+                .trim();
+            if !masm_path.is_empty() {
+                artifact_removed = std::fs::remove_file(masm_path).is_ok();
+            }
+        }
+        Ok(json!({
+            "ok": true,
+            "runtime": "elpify",
+            "machineId": machine_id,
+            "vmId": vm_id,
+            "deleted": true,
+            "artifactRemoved": artifact_removed,
+        }))
+    }
+
     fn exec_vm(&self, packet: &JsonValue) -> Result<JsonValue, String> {
         self.run_vm(packet)
     }

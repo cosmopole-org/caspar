@@ -295,6 +295,12 @@ impl crate::models::ports::vmm::IVmm for StubVmm {
     fn plan_stop_entity(&self, _: &str, _: &Value) -> Result<Value, String> {
         Err("stub".into())
     }
+    fn plan_delete_entity(&self, _: &str, _: &Value) -> Result<Value, String> {
+        Err("stub".into())
+    }
+    fn delete_vm_instance(&self, _: &Value) -> Value {
+        Value::Null
+    }
     fn forward_http(&self, _: &Value) -> Value {
         Value::Null
     }

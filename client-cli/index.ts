@@ -784,6 +784,26 @@ class Caspar {
         entityId: "main",
       });
     },
+    // Permanently destroy one VM instance of a program entity. Unlike
+    // stopMachine (which suspends and can be resumed), this removes the
+    // instance and everything it owns — only the program's owner may call it.
+    deleteVm: async (
+      machineId: string,
+      vmId: string,
+      entityId: string = "main"
+    ): Promise<{ resCode: number; obj: any }> => {
+      if (!this.userId) {
+        return {
+          resCode: USER_ID_NOT_SET_ERR_CODE,
+          obj: { message: USER_ID_NOT_SET_ERR_MSG },
+        };
+      }
+      return await this.sendRequest(this.userId, "/programs/deleteEntity", {
+        programId: machineId,
+        entityId,
+        vmId,
+      });
+    },
     listApps: async (
       offset: number,
       count: number

@@ -4,6 +4,7 @@ use crate::drivers::vmm::prelude::*;
 pub(crate) enum VmPacketKind {
     RunVm,
     TerminateVm,
+    DeleteVm,
     ExecVm,
     CopyToVm,
     BuildVmImage,
@@ -20,6 +21,7 @@ impl VmPacketKind {
         match packet["type"].as_str().unwrap_or("") {
             "runVm" => Self::RunVm,
             "terminateVm" => Self::TerminateVm,
+            "deleteVm" | "destroyVm" => Self::DeleteVm,
             "execVm" | "execDocker" => Self::ExecVm,
             "copyToVm" | "copyToDocker" => Self::CopyToVm,
             "buildVmImage" | "buildDockerImage" => Self::BuildVmImage,

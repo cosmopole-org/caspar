@@ -359,6 +359,34 @@ impl FireVmController {
         }))
     }
 
+    /// Permanently destroy a firecracker sandbox: the microVM process is
+    /// killed, its API socket removed, and its persistent dir dropped
+    /// unconditionally — a delete is never a suspend, so unlike terminate it
+    /// does not wait for `purge` to be asked for.
+    fn delete_vm_inner(&self, packet: &JsonValue) -> Result<JsonValue, String> {
+        let machine_id = packet["machineId"].as_str().unwrap_or("").trim();
+        if machine_id.is_empty() {
+            return Err("machineId is required".to_string());
+        }
+        let vm_id = packet["vmId"].as_str().unwrap_or("main").trim();
+        let mut purge_packet = packet.clone();
+        if let Some(obj) = purge_packet.as_object_mut() {
+            obj.insert("purge".to_string(), JsonValue::Bool(true));
+        }
+        let terminated = self.terminate_vm_inner(&purge_packet)?;
+        // terminate_by_key removes the socket for a *running* VM; an already
+        // suspended one leaves the file behind, so clear it here too.
+        let _ = std::fs::remove_file(fire_socket_path(machine_id, vm_id));
+        Ok(json!({
+            "ok": true,
+            "runtime": "fire",
+            "machineId": machine_id,
+            "vmId": vm_id,
+            "deleted": true,
+            "terminate": terminated,
+        }))
+    }
+
     fn exec_vm_inner(&self, packet: &JsonValue) -> Result<JsonValue, String> {
         let machine_id = packet["machineId"].as_str().unwrap_or("").trim();
         if machine_id.is_empty() {
@@ -502,6 +530,10 @@ impl VmPlugin for FireVmController {
 
     fn terminate_vm(&self, packet: &JsonValue) -> Result<JsonValue, String> {
         self.terminate_vm_inner(packet)
+    }
+
+    fn delete_vm(&self, packet: &JsonValue) -> Result<JsonValue, String> {
+        self.delete_vm_inner(packet)
     }
 
     fn exec_vm(&self, packet: &JsonValue) -> Result<JsonValue, String> {

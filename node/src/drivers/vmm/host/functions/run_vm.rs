@@ -21,10 +21,26 @@ use crate::drivers::vmm::prelude::*;
 /// `dispatch_run_vm_packet`; this host fn just wraps the input in the
 /// `{type:"runVm", ...}` shape that the unified dispatcher expects
 /// and delegates.
-pub(crate) fn host_fn_run_vm(input: &JsonValue) -> String {
+///
+/// The launching creature is recorded as the VM's owner (`caller_program_id`
+/// is node-resolved, never a packet field), because `deleteVm` needs somebody
+/// to authorize against later: run is freely available, destroy is not.
+pub(crate) fn host_fn_run_vm(caller_program_id: &str, input: &JsonValue) -> String {
     let mut packet = input.clone();
     if let JsonValue::Object(map) = &mut packet {
         map.insert("type".to_string(), JsonValue::String("runVm".to_string()));
     }
-    crate::drivers::vmm::dispatch_packet(&packet)
+    let raw = crate::drivers::vmm::dispatch_packet(&packet);
+    // Prefer the vm id the runtime reports (a plugin may allocate one when the
+    // caller named none); fall back to the requested id.
+    let launched_vm_id = serde_json::from_str::<JsonValue>(&raw)
+        .ok()
+        .and_then(|v| v["vmId"].as_str().map(|s| s.to_string()))
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| input["vmId"].as_str().unwrap_or("").to_string());
+    crate::drivers::vmm::host::functions::vm_ownership::record_vm_owner(
+        &launched_vm_id,
+        caller_program_id,
+    );
+    raw
 }

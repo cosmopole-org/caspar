@@ -37,6 +37,29 @@ fn dispatch_typed(packet_type: &str, input: &JsonValue) -> String {
     host_dispatch(&packet)
 }
 
+/// Dispatch a VM lifecycle op through the *unified host-call* dispatcher
+/// rather than straight at the packet router.
+///
+/// The difference is identity. The router takes a packet at face value; the
+/// unified dispatcher resolves the calling program node-side from the packet
+/// envelope (which the node stamps here from the VM's runtime context, never
+/// from guest `input`), which is what lets `runVm` record who owns the VM it
+/// launched and `deleteVm` refuse a creature that does not own it.
+fn dispatch_owned(rt: &WasmMac, op: &str, input: &JsonValue) -> String {
+    match host() {
+        Some(h) => h.unified_host_call(&json!({
+            "type": "hostCall",
+            "op": op,
+            "input": input.clone(),
+            "creatureId": rt.machine_id,
+            "programId": rt.machine_id,
+            "machineId": rt.machine_id,
+            "vmId": rt.vm_id,
+        })),
+        None => json!({"ok": false, "error": "caspar vm host is not initialised"}).to_string(),
+    }
+}
+
 /// Ensure the VM's per-lifecycle JSON transaction exists and run one op on it.
 fn vm_json_op(rt: &mut WasmMac, op: &str, input: &JsonValue) -> String {
     match host() {
@@ -151,7 +174,11 @@ pub fn host_call(
                 Err(err) => json!({"ok": false, "error": err}).to_string(),
             }
         }
-        "runVm" => dispatch_typed("runVm", &req["input"]),
+        // runVm and deleteVm carry ownership: the node records the launching
+        // creature and checks it before a destroy, so both go through the
+        // identity-resolving dispatcher instead of the bare packet router.
+        "runVm" => dispatch_owned(rt, "runVm", &req["input"]),
+        "deleteVm" | "destroyVm" => dispatch_owned(rt, "deleteVm", &req["input"]),
         "terminateVm" => dispatch_typed("terminateVm", &req["input"]),
         "execVm" | "execDocker" => dispatch_typed("execVm", &req["input"]),
         "copyToVm" | "copyToDocker" => dispatch_typed("copyToVm", &req["input"]),

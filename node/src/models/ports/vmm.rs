@@ -171,6 +171,20 @@ pub trait IVmm: Send + Sync {
     /// `ctx`: `{ machineId, programId, entityId, vmId }` →
     /// `{ input, links: [{field, key, required}, ...] }`.
     fn plan_stop_entity(&self, runtime: &str, ctx: &JsonValue) -> Result<JsonValue, String>;
+    /// Ask `runtime`'s plugin to plan a standalone entity *delete* — the
+    /// destructive counterpart of the stop plan, shaped identically
+    /// (`{ input, links }`) so the caller resolves the same per-runtime state
+    /// links before dispatching.
+    fn plan_delete_entity(&self, runtime: &str, ctx: &JsonValue) -> Result<JsonValue, String>;
+
+    /// Permanently destroy one VM instance through its runtime plugin.
+    ///
+    /// Node-internal: the caller has already authorized the delete (the
+    /// program API checks the program's owner; the `deleteVm` host op checks
+    /// the VM's owning creature). Reaching the router through the VMM rather
+    /// than the guest-facing key envelope is what keeps this off the path a
+    /// guest can address.
+    fn delete_vm_instance(&self, input: &JsonValue) -> JsonValue;
 
     /// Forward a packaged inbound HTTP request to the VM instance it targets.
     ///

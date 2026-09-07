@@ -299,8 +299,9 @@ pub(crate) fn handle_unified_host_call(packet: &JsonValue) -> String {
             }
         }
         "dbOp" => host_fn_db_op(&ctx, &input),
-        "runVm" => host_fn_run_vm(&input),
+        "runVm" => host_fn_run_vm(&ctx.program_id, &input),
         "terminateVm" => host_fn_terminate_vm(&input),
+        "deleteVm" | "destroyVm" => host_fn_delete_vm(&ctx.program_id, &input),
         "execVm" | "execDocker" => host_fn_exec_vm(&input),
         "copyToVm" | "copyToDocker" => host_fn_copy_to_vm(&input),
         "buildVmImage" | "buildDockerImage" => host_fn_build_vm_image(&input),
