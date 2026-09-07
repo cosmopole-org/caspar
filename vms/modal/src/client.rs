@@ -141,8 +141,22 @@ fn runtime() -> Result<&'static tokio::runtime::Runtime, String> {
 }
 
 /// Run one async Modal operation to completion from synchronous plugin code.
+///
+/// Every caller is a plain node thread — the node's network layer and its VM
+/// workers are `std::thread`s, not Tokio tasks — so this is an ordinary
+/// `block_on` on the Modal runtime. A caller that was already inside some other
+/// runtime is reported rather than attempted: `block_on` from within a runtime
+/// panics, and a named error is worth more than a panic surfacing as "vmm panic"
+/// on a file listing. (The futures here borrow their stub, so they cannot simply
+/// be spawned onto another runtime instead.)
 pub(crate) fn block_on<F: std::future::Future>(fut: F) -> Result<F::Output, String> {
-    Ok(runtime()?.block_on(fut))
+    let rt = runtime()?;
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return Err(
+            "modal operations cannot be driven from inside another Tokio runtime".to_string(),
+        );
+    }
+    Ok(rt.block_on(fut))
 }
 
 /// A connected, authenticated Modal client plus the context its requests carry.
@@ -170,9 +184,23 @@ pub(crate) fn connect() -> Result<ModalConn, String> {
                 .timeout(Duration::from_secs(120))
                 .http2_keep_alive_interval(Duration::from_secs(30))
                 .keep_alive_while_idle(true);
-            // `connect_lazy` avoids a blocking connect inside the OnceLock
-            // initializer; the first RPC establishes the connection and
-            // surfaces any failure as that call's error.
+            // BUILDING the channel is itself an async-runtime operation, not
+            // just using it: `connect_lazy` hands tonic's buffer worker to the
+            // ambient executor with `tokio::spawn`, which panics outright when
+            // there is no runtime on this thread — "there is no reactor
+            // running, must be called from the context of a Tokio 1.x runtime".
+            //
+            // Every caller here is a plain node thread (the node's own network
+            // layer and its VM workers are `std::thread`s), so there never was
+            // one, and the panic came back as a failed VM op with a Tokio
+            // message in it. Enter the Modal runtime for the construction, so
+            // the worker is spawned onto the same runtime that will later drive
+            // the calls.
+            //
+            // `connect_lazy` rather than `connect` is still deliberate: it keeps
+            // a blocking network round trip out of this initializer, and the
+            // first RPC surfaces a connection failure as that call's error.
+            let _guard = runtime()?.enter();
             Ok((endpoint.connect_lazy(), creds))
         })
         .as_ref()
@@ -196,4 +224,41 @@ pub(crate) fn connect() -> Result<ModalConn, String> {
 /// modal operation with a clear message instead of a transport error.
 pub(crate) fn is_configured() -> bool {
     ModalCredentials::from_env().is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Building the Modal channel must not need a Tokio runtime on the CALLER's
+    /// thread.
+    ///
+    /// This is the regression that took the platform's sandboxes down: every
+    /// entry point into this plugin is a plain node thread, `connect_lazy`
+    /// spawns tonic's buffer worker with `tokio::spawn`, and that panics with
+    /// "there is no reactor running, must be called from the context of a Tokio
+    /// 1.x runtime" when no runtime is entered. The panic came back to the
+    /// client as `vmm panic: …` on a file listing, and no sandbox was ever
+    /// created. The test runs `connect` on a bare thread, which is exactly what
+    /// the node does.
+    #[test]
+    fn connects_from_a_thread_with_no_tokio_runtime() {
+        std::env::set_var("MODAL_TOKEN_ID", "ak-test");
+        std::env::set_var("MODAL_TOKEN_SECRET", "as-test");
+
+        let built = std::thread::spawn(|| {
+            assert!(
+                tokio::runtime::Handle::try_current().is_err(),
+                "the test thread must have no runtime, like the node's own threads",
+            );
+            connect().map(|_| ())
+        })
+        .join();
+
+        match built {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => panic!("connect failed: {}", e),
+            Err(_) => panic!("connect panicked on a thread with no Tokio runtime"),
+        }
+    }
 }
