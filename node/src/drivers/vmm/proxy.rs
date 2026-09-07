@@ -26,11 +26,11 @@
 //! single terminal message keep the original one-shot behavior unchanged.
 //!
 //! This is the substrate for "agent" deployments: an AI-agent skill file is
-//! deployed as a proxy entity targeting a davinci docker-VM creature; every
-//! request through the proxy reaches davinci with the skill attached (used
-//! as the session's system instruction) and davinci streams its trajectory
-//! (thoughts, tool steps) plus the final result back through the proxy to the
-//! requester on one correlation.
+//! deployed as a proxy entity targeting the platform's agent backbone; every
+//! request through the proxy reaches that backbone with the skill attached
+//! (used as the session's system instruction), and the backbone streams its
+//! trajectory (thoughts, tool steps) plus the final result back through the
+//! proxy to the requester on one correlation.
 
 use std::fs;
 use std::sync::{Arc, Mutex};
@@ -54,7 +54,7 @@ pub const DEFAULT_ATTACH_FIELD: &str = "attachment";
 /// responds must not leak its correlation record forever: after this window
 /// the record is consumed by the reaper (or by a late response, which is
 /// then dropped). Sized to comfortably outlast a long streaming run (e.g. a
-/// davinci agent's wall-clock budget); each streamed chunk also refreshes the
+/// an agent's wall-clock budget); each streamed chunk also refreshes the
 /// window, so an actively-streaming correlation never expires mid-run.
 pub const DEFAULT_CORRELATION_TTL_MS: i64 = 20 * 60 * 1000;
 

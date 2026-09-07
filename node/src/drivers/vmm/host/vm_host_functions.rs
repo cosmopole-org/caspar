@@ -990,6 +990,8 @@ pub(crate) fn host_fn_register_finance_node(
     }
     node.insert("nodeOwnerAccountId".into(), json!(owner_id));
     node.insert("meterCreatureId".into(), json!(meter_creature_id));
+    // Historical entity name for the backbone slot; the meter is whatever
+    // program the node registered, and this only labels it.
     node.insert("meterEntityId".into(), json!("davinci"));
     node.insert("talentMeterCreatureId".into(), json!(talent_creature_id));
     node.insert("talentMeterEntityId".into(), json!("main"));
