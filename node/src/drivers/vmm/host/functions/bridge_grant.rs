@@ -13,9 +13,11 @@
 //! * A token's owning creature is `ctx.program_id` — node-resolved, not a
 //!   field the guest supplies — so a creature can only mint tokens that reach
 //!   itself.
-//! * A topic belongs to the first creature that grants it, and
-//!   `publishUpdate` refuses any other. Without that, a creature could push
-//!   packets into another creature's bridge just by naming its topic.
+//! * A topic belongs to the creature that first grants it — or, in practice,
+//!   to that creature's *owner*: a deployment is many creatures (each action
+//!   is its own program), so the one that mints a bridge's grant and the one
+//!   that later publishes to it are siblings of the same owner. Another
+//!   tenant's creature is refused, which is the property that matters.
 //! * The token is stored only as a SHA-256, so reading node state does not
 //!   yield a working credential.
 
@@ -26,6 +28,20 @@ use crate::models::transaction::ITrx;
 use crate::shell::api::actions::gateway::{
     bridge_grant_key, bridge_topic_owner_key, hash_bridge_token,
 };
+
+/// Whether two programs belong to the same owner.
+///
+/// The unit of ownership for a bridge grant is the owner, not the program: a
+/// deployment is many creatures (each action is its own program), so the one
+/// that mints a grant and the one that later publishes to its topic are
+/// siblings. Another tenant's creature has a different owner and is refused.
+fn same_owner_user(a: &str, b: &str) -> bool {
+    if a.trim().is_empty() || b.trim().is_empty() {
+        return false;
+    }
+    let owner_a = super::vm_ownership::program_owner_user(a);
+    !owner_a.is_empty() && owner_a == super::vm_ownership::program_owner_user(b)
+}
 
 /// Topics named in a host-call input, trimmed and de-duplicated.
 fn requested_topics(input: &JsonValue) -> Vec<String> {
@@ -79,9 +95,21 @@ pub(crate) fn host_fn_register_bridge_token(
         0
     };
 
+    // Where a bridge's inbound `/gateway/signal` calls are delivered. The
+    // minting creature is rarely the right handler — a space's `create` mints
+    // the grant, but the bridge's messages belong to the crew creature — so
+    // the owner names the target. This is not an escalation: a creature can
+    // already signal any creature directly.
+    let deliver_to = input["deliverTo"]
+        .as_str()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| caller.clone());
+
     let hash = hash_bridge_token(&token);
     let grant = json!({
         "creatureId": caller,
+        "deliverTo": deliver_to,
         "topics": topics,
         "expiresAt": expires_at,
         "createdAt": chrono::Utc::now().timestamp_millis(),
@@ -100,7 +128,10 @@ pub(crate) fn host_fn_register_bridge_token(
                 for topic in &topics_for_trx {
                     let key = bridge_topic_owner_key(topic);
                     let owner = trx.get_link(&key);
-                    if !owner.is_empty() && owner != caller_for_trx {
+                    if !owner.is_empty()
+                        && owner != caller_for_trx
+                        && !same_owner_user(&owner, &caller_for_trx)
+                    {
                         *conflict_c.lock().unwrap() = topic.clone();
                         return Ok(());
                     }
@@ -175,7 +206,7 @@ pub(crate) fn host_fn_revoke_bridge_token(
         // itself down twice must not fail the second time.
         return json!({"ok": true, "revoked": false}).to_string();
     }
-    if owner != caller {
+    if owner != caller && !same_owner_user(&owner, &caller) {
         return json!({"ok": false, "error": "you do not own this bridge token"}).to_string();
     }
 
@@ -221,7 +252,7 @@ pub(crate) fn host_fn_publish_update(caller_program_id: &str, input: &JsonValue)
         return json!({"ok": false, "error": "no bridge grant exists for this topic"})
             .to_string();
     }
-    if owner != caller {
+    if owner != caller && !same_owner_user(&owner, &caller) {
         return json!({"ok": false, "error": "you do not own this topic"}).to_string();
     }
 

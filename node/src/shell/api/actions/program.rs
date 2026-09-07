@@ -61,7 +61,7 @@ fn normalize_entity_type(s: &str) -> String {
 /// the same transaction. In that case, use the link as a compatibility fallback.
 /// We deliberately fail closed when no linked owner exists or more than one
 /// linked machine is found.
-fn resolve_program_owner_machine(trx: &dyn ITrx, program: &Program) -> Creature {
+pub(crate) fn resolve_program_owner_machine(trx: &dyn ITrx, program: &Program) -> Creature {
     let canonical = Creature {
         id: program.machine_id.clone(),
         ..Default::default()

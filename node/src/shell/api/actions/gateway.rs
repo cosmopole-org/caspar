@@ -59,7 +59,13 @@ pub fn hash_bridge_token(token: &str) -> String {
 
 /// A verified bridge grant.
 pub struct BridgeGrant {
+    /// The creature that minted the grant.
     pub creature_id: String,
+    /// Where the bridge's inbound signals are delivered. Usually a *different*
+    /// creature from the minter: a space's `create` action mints the grant,
+    /// but the bridge's messages belong to the crew creature that handles
+    /// them. Falls back to the minter when the grant names none.
+    pub deliver_to: String,
     pub topics: Vec<String>,
     pub expires_at: i64,
 }
@@ -93,8 +99,14 @@ pub fn resolve_bridge_grant(trx: &dyn ITrx, token: &str) -> Option<BridgeGrant> 
                 .collect()
         })
         .unwrap_or_default();
+    let deliver_to = grant["deliverTo"]
+        .as_str()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| creature_id.clone());
     Some(BridgeGrant {
         creature_id,
+        deliver_to,
         topics,
         expires_at,
     })
@@ -172,10 +184,11 @@ fn unsubscribe(app: Arc<dyn ICore>) -> Arc<dyn ISecureAction> {
 /// creature to do something.
 ///
 /// The creature is **not** taken from the request. It is the one recorded in
-/// the grant, so a token can only ever reach the creature that minted it —
-/// a bridge cannot address the rest of the platform. The payload travels as
-/// an ordinary `creatures/signal`, tagged with the bridge's topic so the
-/// creature knows which of its bridges is calling.
+/// the grant (`deliverTo`, else the minter), so a token can only ever reach
+/// the handler its owner nominated — a bridge cannot address the rest of the
+/// platform. The payload travels as an ordinary `creatures/signal`, tagged
+/// with the bridge's topic so the creature knows which of its bridges is
+/// calling.
 fn signal(app: Arc<dyn ICore>) -> Arc<dyn ISecureAction> {
     let app_for_handler = app.clone();
     build_secure_action::<GatewaySignalInput, _>(
@@ -218,7 +231,7 @@ fn signal(app: Arc<dyn ICore>) -> Arc<dyn ISecureAction> {
                 .to_string(),
             });
 
-            let creature_id = grant.creature_id.clone();
+            let creature_id = grant.deliver_to.clone();
             let app_async = app_for_handler.clone();
             let _ = async_once(move || {
                 app_async.tools().signaler().signal_user(
@@ -231,7 +244,7 @@ fn signal(app: Arc<dyn ICore>) -> Arc<dyn ISecureAction> {
 
             Ok(json!({
                 "ok": true,
-                "creatureId": grant.creature_id,
+                "creatureId": grant.deliver_to,
                 "correlationId": input.correlation_id,
             }))
         },

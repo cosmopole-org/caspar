@@ -1,5 +1,5 @@
 use crate::drivers::vmm::host::functions::vm_ownership::{
-    clear_vm_records, owns_vm_instance, vm_owner_program,
+    clear_vm_records, owns_vm_instance, program_owner_user, vm_owner_program,
 };
 use crate::drivers::vmm::prelude::*;
 
@@ -11,12 +11,21 @@ use crate::drivers::vmm::prelude::*;
 /// links that described it.
 ///
 /// **Access control.** A VM may only be deleted by the creature that created
-/// it. The owner was recorded by `runVm` at launch (`VmOwnerProgram::<vmId>`),
-/// or by `/programs/runEntity` as a program instance link; `caller_program_id`
-/// is the node-resolved calling program, not a packet field, so a creature
+/// it, or by a sibling creature of the same owner. The launching program is
+/// recorded by `runVm` (`VmOwnerProgram::<vmId>`), or by
+/// `/programs/runEntity` as a program instance link; `caller_program_id` is
+/// the node-resolved calling program, not a packet field, so a creature
 /// cannot present someone else's id. A VM with no recorded owner at all is
 /// refused rather than allowed: an unknown owner is not the same as no owner,
 /// and a delete is not recoverable.
+///
+/// The sibling case is not a loosening, it is the actual unit of ownership. A
+/// deployment is not one program: each creature action is its own machine +
+/// program, so the action that creates a resource and the action that tears it
+/// down are always different programs of the same owner (a space's `create`
+/// and its `delete`). Checking the program id alone would mean nothing could
+/// ever delete what it made, while checking the owning user still refuses
+/// another tenant's creature.
 pub(crate) fn host_fn_delete_vm(caller_program_id: &str, input: &JsonValue) -> String {
     let vm_id = input["vmId"].as_str().unwrap_or("").trim().to_string();
     if vm_id.is_empty() {
@@ -30,7 +39,11 @@ pub(crate) fn host_fn_delete_vm(caller_program_id: &str, input: &JsonValue) -> S
 
     let owner = vm_owner_program(&vm_id);
     let authorized = if !owner.is_empty() {
-        owner == caller
+        owner == caller || {
+            let owner_user = program_owner_user(&owner);
+            let caller_user = program_owner_user(&caller);
+            !owner_user.is_empty() && owner_user == caller_user
+        }
     } else {
         owns_vm_instance(&caller, &vm_id)
     };

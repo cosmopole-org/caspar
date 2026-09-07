@@ -254,7 +254,7 @@ The host recognises these operations (from `vms/wasm/src/host_calls.rs`):
 | `commitTrx` | Commit & reset the per-VM JSON transaction and flush the raw dbOp buffer. |
 | `lockResource` / `unlockResource` | Acquire / release a named resource lock. |
 | `runVm` / `terminateVm` / `execVm` / `copyToVm` / `buildVmImage` | Orchestrate subordinate VMs (any runtime) via the VM packet router. |
-| `deleteVm` | **Permanently** destroy a VM this creature launched. `runVm` records the launching creature; a delete by anyone else is refused, and a VM with no recorded owner is refused rather than allowed. |
+| `deleteVm` | **Permanently** destroy a VM this creature launched. `runVm` records the launching program; a delete is allowed for that program or a sibling creature of the same owner (a deployment is many programs — the action that creates a resource is never the one that deletes it), and refused for anyone else. A VM with no recorded owner is refused rather than allowed. |
 | `registerBridgeToken` / `revokeBridgeToken` / `publishUpdate` | The [gateway subscription channel](#the-gateway-subscription-channel-gateway): mint bearer tokens for a program running outside Caspar, and push updates to the ones holding a socket open. |
 | `httpPost` / `httpRequest` | Perform an outbound HTTP request on behalf of the VM. |
 | `verifyProgramExecution` (`elpifyProof`) | Verify a program-execution proof via the provable runtime plugin. |
@@ -369,9 +369,13 @@ minted**, and that grant is the whole of its authority.
 
 **Creature side (host ops):**
 
-- `registerBridgeToken {token, topics[], ttlSecs}` — mint or replace a grant.
-  The owner is the node-resolved calling program, never an input field, so a
-  creature can only mint tokens that reach itself.
+- `registerBridgeToken {token, topics[], ttlSecs, deliverTo}` — mint or replace
+  a grant. The owner is the node-resolved calling program, never an input
+  field. `deliverTo` names the creature the bridge's inbound signals reach, and
+  is usually a *different* creature from the minter: a space's `create` mints
+  the grant, but the bridge's messages belong to the crew creature that handles
+  them. It is not an escalation — a creature can already signal any creature
+  directly.
 - `revokeBridgeToken {token | tokenHash}` — drop it. Revoking an unknown token
   is a no-op, so a bridge tearing itself down twice does not fail.
 - `publishUpdate {topic, key, data}` — push one packet to every connection
@@ -383,16 +387,19 @@ minted**, and that grant is the whole of its authority.
   the granted topics. A requested list can only ever *narrow* the grant.
 - `/gateway/unsubscribe {token}`.
 - `/gateway/signal {token, topic, action, payload, correlationId}` — the
-  inbound direction. The target creature is taken from the **grant**, not the
-  request, so a token can only reach the creature that minted it.
+  inbound direction. The target creature is taken from the **grant**
+  (`deliverTo`), not the request, so a token can only reach the handler its
+  owner nominated.
 
 Properties worth knowing:
 
 - The token is stored only as its SHA-256, so a state dump hands nobody a
   working credential.
-- A topic has exactly one owning creature, claimed when its first grant is
-  minted; `publishUpdate` refuses any other. Otherwise any creature could push
-  packets into another's bridge just by naming its topic.
+- A topic is claimed by the creature that first grants it — in practice by its
+  **owner**, since a deployment is many creatures (each action is its own
+  program) and the one that mints a grant is a sibling of the one that later
+  publishes to it. Another tenant's creature is refused, which is the property
+  that matters.
 - Delivery never blocks the publisher: a subscriber's sink hands the frame to
   that connection's own outbound queue and returns.
 - A subscriber whose connection has gone is reaped on the next publish, and

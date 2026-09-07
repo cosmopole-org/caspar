@@ -69,6 +69,49 @@ pub(crate) fn vm_owner_program(vm_id: &str) -> String {
     owner.trim().to_string()
 }
 
+/// The user who owns a program, resolved through the program's owning machine
+/// creature — the same resolution `/programs/runEntity` authorizes against.
+///
+/// This is the granularity a delete is checked at, and it has to be. A
+/// deployment is not one program: every creature action is its own machine +
+/// program (the Decillion server deploys ~90 of them), so the creature that
+/// creates a resource and the one that tears it down are different programs
+/// belonging to the same owner. Checking the *program* id would mean a space's
+/// delete action could never remove the sandbox its create action made, while
+/// checking the owner still refuses another tenant's creature entirely.
+pub(crate) fn program_owner_user(program_id: &str) -> String {
+    let program_id = program_id.trim();
+    if program_id.is_empty() {
+        return String::new();
+    }
+    let program_id = program_id.to_string();
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let slot_c = slot.clone();
+    with_global_app(|app| {
+        app.modify_state(
+            true,
+            Box::new(move |trx: &dyn ITrx| {
+                if !trx.has_obj("Program", &program_id) {
+                    return Ok(());
+                }
+                let program = crate::shell::api::model::Program {
+                    id: program_id.clone(),
+                    ..Default::default()
+                }
+                .pull(trx);
+                let machine =
+                    crate::shell::api::actions::program::resolve_program_owner_machine(
+                        trx, &program,
+                    );
+                *slot_c.lock().unwrap() = machine.owner_id;
+                Ok(())
+            }),
+        );
+    });
+    let owner = slot.lock().unwrap().clone();
+    owner.trim().to_string()
+}
+
 /// Whether `program_id` launched `vm_id` as a program *entity*
 /// (`/programs/runEntity`), which records `VmInstance::<program>::<entity>::<vm>`
 /// rather than an owner link.
