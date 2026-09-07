@@ -83,6 +83,33 @@ pub struct BridgeGrant {
     pub expires_at: i64,
 }
 
+/// Build the creature signal envelope for a bridge call.
+///
+/// Bridge provenance deliberately lives on the outer node-created packet. A
+/// caller controls `payload`, so putting `bridge` beside that payload inside
+/// the user-shaped action object either loses it during normal signal
+/// unwrapping or makes an untrusted payload indistinguishable from provenance.
+fn bridge_signal_packet(input: &GatewaySignalInput, topic: &str, creature_id: &str) -> Value {
+    let payload = json!({
+        "action": input.action.trim(),
+        "correlationId": input.correlation_id,
+        "payload": input.payload,
+    });
+    json!({
+        "action": "single",
+        "entityId": "main",
+        "bridge": {
+            "topic": topic,
+            "creatureId": creature_id,
+        },
+        "data": json!({
+            "correlationId": input.correlation_id,
+            "payload": payload.to_string(),
+        })
+        .to_string(),
+    })
+}
+
 /// Read and validate the grant behind a bearer token.
 ///
 /// Returns `None` for an unknown or expired token — the caller must not be
@@ -94,7 +121,11 @@ pub fn resolve_bridge_grant(trx: &dyn ITrx, token: &str) -> Option<BridgeGrant> 
     }
     let hash = hash_bridge_token(token);
     let grant = Value::Object(trx.get_json(&bridge_grant_key(&hash), "grant").ok()?);
-    let creature_id = grant["creatureId"].as_str().unwrap_or("").trim().to_string();
+    let creature_id = grant["creatureId"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
     if creature_id.is_empty() {
         return None;
     }
@@ -234,26 +265,9 @@ fn signal(app: Arc<dyn ICore>) -> Arc<dyn ISecureAction> {
             }
 
             // Shaped like the envelope creatures already unwrap
-            // (`unwrapSignal`), with the bridge's provenance attached so the
-            // creature can tell a bridge call from a user's.
-            let payload = json!({
-                "action": action,
-                "correlationId": input.correlation_id,
-                "payload": input.payload,
-                "bridge": {
-                    "topic": topic,
-                    "creatureId": grant.creature_id,
-                },
-            });
-            let packet = json!({
-                "action": "single",
-                "entityId": "main",
-                "data": json!({
-                    "correlationId": input.correlation_id,
-                    "payload": payload.to_string(),
-                })
-                .to_string(),
-            });
+            // (`unwrapSignal`). The verified provenance is on the outer
+            // node-created packet, outside the caller-controlled payload.
+            let packet = bridge_signal_packet(&input, &topic, &grant.creature_id);
 
             // The handler is the one the grant names for this action, else its
             // default. Never the one the request asked for.
@@ -289,5 +303,30 @@ pub fn install(app: Arc<dyn ICore>) {
     ];
     for h in handlers {
         actor.inject_secure_action(h);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bridge_provenance_is_outside_the_caller_payload() {
+        let input = GatewaySignalInput {
+            token: "secret".to_string(),
+            topic: "space:alpha".to_string(),
+            action: "crew/message".to_string(),
+            correlation_id: "run-1".to_string(),
+            payload: json!({"kind": "answer", "bridge": {"topic": "space:forged"}}),
+        };
+
+        let packet = bridge_signal_packet(&input, "space:alpha", "spaces-create");
+        assert_eq!(packet["bridge"]["topic"], "space:alpha");
+        assert_eq!(packet["bridge"]["creatureId"], "spaces-create");
+
+        let data: Value = serde_json::from_str(packet["data"].as_str().unwrap()).unwrap();
+        let inner: Value = serde_json::from_str(data["payload"].as_str().unwrap()).unwrap();
+        assert!(inner.get("bridge").is_none());
+        assert_eq!(inner["payload"]["bridge"]["topic"], "space:forged");
     }
 }
