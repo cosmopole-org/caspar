@@ -1,4 +1,5 @@
 pub mod access;
+pub mod bridge_grant;
 pub mod build_vm_image;
 pub mod consume_lock;
 pub mod copy_to_vm;
@@ -24,6 +25,7 @@ pub mod vm_log;
 pub mod vm_ownership;
 
 pub use access::*;
+pub use bridge_grant::*;
 pub use build_vm_image::*;
 pub use consume_lock::*;
 pub use copy_to_vm::*;

@@ -302,6 +302,13 @@ pub(crate) fn handle_unified_host_call(packet: &JsonValue) -> String {
         "runVm" => host_fn_run_vm(&ctx.program_id, &input),
         "terminateVm" => host_fn_terminate_vm(&input),
         "deleteVm" | "destroyVm" => host_fn_delete_vm(&ctx.program_id, &input),
+        // The gateway subscription channel: a creature mints bearer tokens for
+        // programs it runs outside Caspar, and pushes updates to the ones
+        // holding a socket open. The owning creature is the resolved caller,
+        // never an input field.
+        "registerBridgeToken" => host_fn_register_bridge_token(&ctx.program_id, &input),
+        "revokeBridgeToken" => host_fn_revoke_bridge_token(&ctx.program_id, &input),
+        "publishUpdate" => host_fn_publish_update(&ctx.program_id, &input),
         "execVm" | "execDocker" => host_fn_exec_vm(&input),
         "copyToVm" | "copyToDocker" => host_fn_copy_to_vm(&input),
         "buildVmImage" | "buildDockerImage" => host_fn_build_vm_image(&input),
