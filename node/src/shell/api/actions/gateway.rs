@@ -21,6 +21,7 @@
 //! anonymous — because a bridge cannot sign; the token *is* the identity
 //! check, and every one of these bodies performs it before doing anything.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
@@ -66,6 +67,18 @@ pub struct BridgeGrant {
     /// but the bridge's messages belong to the crew creature that handles
     /// them. Falls back to the minter when the grant names none.
     pub deliver_to: String,
+    /// Per-action overrides of `deliver_to`, keyed by the exact action string.
+    ///
+    /// A bridge does more than one KIND of thing — it posts what its agents
+    /// said, and it asks the platform to make a model call on its behalf — and
+    /// those belong to different creatures. Without this a project's runtime
+    /// could only ever reach one handler, so the LLM proxy would have to live
+    /// inside the message creature purely because of how the token was minted.
+    ///
+    /// This is not an escalation: every entry is named by the creature that
+    /// minted the grant, so the bridge still reaches exactly the handlers its
+    /// owner nominated and nothing else.
+    pub routes: HashMap<String, String>,
     pub topics: Vec<String>,
     pub expires_at: i64,
 }
@@ -104,9 +117,20 @@ pub fn resolve_bridge_grant(trx: &dyn ITrx, token: &str) -> Option<BridgeGrant> 
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| creature_id.clone());
+    let mut routes: HashMap<String, String> = HashMap::new();
+    if let Some(entries) = grant["routes"].as_object() {
+        for (action, target) in entries {
+            let action = action.trim();
+            let target = target.as_str().unwrap_or("").trim();
+            if !action.is_empty() && !target.is_empty() {
+                routes.insert(action.to_string(), target.to_string());
+            }
+        }
+    }
     Some(BridgeGrant {
         creature_id,
         deliver_to,
+        routes,
         topics,
         expires_at,
     })
@@ -231,20 +255,25 @@ fn signal(app: Arc<dyn ICore>) -> Arc<dyn ISecureAction> {
                 .to_string(),
             });
 
-            let creature_id = grant.deliver_to.clone();
+            // The handler is the one the grant names for this action, else its
+            // default. Never the one the request asked for.
+            let creature_id = grant
+                .routes
+                .get(&action)
+                .cloned()
+                .unwrap_or_else(|| grant.deliver_to.clone());
             let app_async = app_for_handler.clone();
+            let target = creature_id.clone();
             let _ = async_once(move || {
-                app_async.tools().signaler().signal_user(
-                    "creatures/signal",
-                    &creature_id,
-                    packet,
-                    true,
-                );
+                app_async
+                    .tools()
+                    .signaler()
+                    .signal_user("creatures/signal", &target, packet, true);
             });
 
             Ok(json!({
                 "ok": true,
-                "creatureId": grant.deliver_to,
+                "creatureId": creature_id,
                 "correlationId": input.correlation_id,
             }))
         },

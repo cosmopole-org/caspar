@@ -106,10 +106,27 @@ pub(crate) fn host_fn_register_bridge_token(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| caller.clone());
 
+    // Per-action handlers. A bridge does more than one kind of thing — it
+    // posts what its agents said, and it asks the platform to make a model
+    // call on its behalf — and those belong to different creatures. Every
+    // entry is named HERE, by the minting creature, so the bridge still
+    // reaches only handlers its owner nominated.
+    let mut routes = serde_json::Map::new();
+    if let Some(entries) = input["routes"].as_object() {
+        for (action, target) in entries {
+            let action = action.trim();
+            let target = target.as_str().unwrap_or("").trim();
+            if !action.is_empty() && !target.is_empty() {
+                routes.insert(action.to_string(), json!(target));
+            }
+        }
+    }
+
     let hash = hash_bridge_token(&token);
     let grant = json!({
         "creatureId": caller,
         "deliverTo": deliver_to,
+        "routes": JsonValue::Object(routes),
         "topics": topics,
         "expiresAt": expires_at,
         "createdAt": chrono::Utc::now().timestamp_millis(),
