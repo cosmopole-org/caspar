@@ -75,7 +75,7 @@ transactions and fans them out to application state. See
 ## VM Manager / VM Packet Router
 
 `node/src/drivers/vmm` exposes a single `dispatch_packet` / `route_vm_packet`
-path that drives all six runtimes. The controllers live in
+path that drives all seven runtimes. The controllers live in
 `drivers/vmm/controllers`. `task_graph.rs` is runtime-agnostic: each op injects
 a canonical `"type"` field and delegates to `dispatch_packet`, so the router is
 the only place runtime branching happens. At the SDK layer this dispatch is

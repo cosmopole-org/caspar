@@ -46,6 +46,7 @@ use serde_json::Value;
 use tungstenite::protocol::Message;
 use tungstenite::{accept as ws_accept, WebSocket};
 
+use crate::drivers::gateway_subs;
 use crate::drivers::network::framing::{
     accept, bind_tls, decode_request_body, encode_client_response_body,
     encode_client_update_body, TlsStream,
@@ -365,6 +366,11 @@ impl Ws {
                     socket.listener_registered.store(true, Ordering::Release);
                     self.attach_user_listener(socket, &parsed.user_id);
                 }
+                // The gateway subscription channel. `/gateway/subscribe`
+                // verifies the bridge's bearer token and answers with the
+                // topics it granted; binding the socket has to happen here,
+                // because only the transport can write to this connection.
+                self.apply_gateway_subscription(socket, &parsed.path, &value);
             }
             Err(e) => {
                 socket.write_response(
@@ -381,6 +387,53 @@ impl Ws {
                     started.elapsed().as_millis()
                 );
             }
+        }
+    }
+
+    /// Bind (or release) this connection's gateway topic subscription from an
+    /// action's result.
+    ///
+    /// The action layer authenticates the bearer token and decides the topics;
+    /// this only wires the socket to them. The sink returns `false` once the
+    /// connection is gone, which is how the registry reaps a bridge whose
+    /// sandbox went away.
+    fn apply_gateway_subscription(&self, socket: &Arc<Socket>, path: &str, result: &Value) {
+        match path {
+            "/gateway/subscribe" => {
+                let grant = &result["gatewaySubscribe"];
+                let topics: Vec<String> = grant["topics"]
+                    .as_array()
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if topics.is_empty() {
+                    return;
+                }
+                let sink_socket = socket.clone();
+                gateway_subs::subscribe(gateway_subs::Subscriber {
+                    id: socket.id.clone(),
+                    creature_id: grant["creatureId"].as_str().unwrap_or("").to_string(),
+                    topics,
+                    sink: Arc::new(move |key: &str, data: &Value| {
+                        if sink_socket.is_disconnected() {
+                            return false;
+                        }
+                        let bytes = serde_json::to_vec(data).unwrap_or_default();
+                        sink_socket.write_update(key, &bytes);
+                        true
+                    }),
+                });
+            }
+            "/gateway/unsubscribe" => {
+                if result["gatewayUnsubscribe"].as_bool().unwrap_or(false) {
+                    gateway_subs::unsubscribe(&socket.id);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -573,6 +626,11 @@ impl Ws {
         // same user doesn't lose its still-registered listener.
         let _ = ws.close(None);
         socket.shutdown();
+        // A gateway subscription belongs to this connection alone (a bridge
+        // holds one socket, not a user's set of them), so it is dropped
+        // immediately rather than after the reconnect grace period — a
+        // reconnecting bridge re-subscribes with its token.
+        gateway_subs::unsubscribe(&socket.id);
         let user_id = socket.user_id();
         // Always drop the IP-keyed `sockets` entry this connection registered at
         // accept time, before the unauthenticated early-return below. Only the

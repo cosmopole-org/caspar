@@ -18,6 +18,7 @@ pub fn register_all() {
         caspar_vm_elpify::register();
         caspar_vm_fire::register();
         caspar_vm_javascript::register();
+        caspar_vm_modal::register();
         caspar_vm_wasm::register();
     });
 }
@@ -30,6 +31,7 @@ pub fn enabled_vm_keys() -> Vec<&'static str> {
         "elpify",
         "fire",
         "javascript",
+        "modal",
         "wasm",
     ]
 }

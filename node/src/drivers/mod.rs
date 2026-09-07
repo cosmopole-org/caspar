@@ -13,6 +13,7 @@
 
 pub mod cluster;
 pub mod file;
+pub mod gateway_subs;
 pub mod network;
 pub mod ratelimit;
 pub mod rocks_tuning;

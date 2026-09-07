@@ -103,6 +103,10 @@ input's `origin` field, **not** by the route name:
 > (`/creatures/login`, `/creatures/authenticate`, `/creatures/get`,
 > `/creatures/create`, `/creatures/signal`, …).
 
+### Gateway (bridge subscriptions)
+- `POST /gateway/subscribe`, `/gateway/unsubscribe`, `/gateway/signal`
+  — see [The gateway subscription channel](#the-gateway-subscription-channel-gateway).
+
 ### Stores
 - `POST /stores/addMachine`, `/stores/listMachines`, `/stores/updateProgram`, `/stores/removeMachine`
 - `POST /stores/addProgram`, `/stores/removeProgram`, `/stores/addMember`, `/stores/updateMember`
@@ -250,7 +254,10 @@ The host recognises these operations (from `vms/wasm/src/host_calls.rs`):
 | `commitTrx` | Commit & reset the per-VM JSON transaction and flush the raw dbOp buffer. |
 | `lockResource` / `unlockResource` | Acquire / release a named resource lock. |
 | `runVm` / `terminateVm` / `execVm` / `copyToVm` / `buildVmImage` | Orchestrate subordinate VMs (any runtime) via the VM packet router. |
-| `httpPost` / `httpRequest` | Perform an outbound HTTP request on behalf of the VM. |
+| `deleteVm` | **Permanently** destroy a VM this creature launched. `runVm` records the launching program; a delete is allowed for that program or a sibling creature of the same owner (a deployment is many programs — the action that creates a resource is never the one that deletes it), and refused for anyone else. A VM with no recorded owner is refused rather than allowed. |
+| `vmEndpoints` | The public URLs a VM this creature launched is reachable on (a cloud sandbox's tunnels). Same ownership check as `deleteVm`; a runtime with nothing public answers with an empty list rather than an error. |
+| `registerBridgeToken` / `revokeBridgeToken` / `publishUpdate` | The [gateway subscription channel](#the-gateway-subscription-channel-gateway): mint bearer tokens for a program running outside Caspar, and push updates to the ones holding a socket open. |
+| `httpPost` / `httpRequest` | Perform an outbound HTTP request on behalf of the VM. Returns the base64-encoded body; pass `withResponse: true` to get `{ok, status, headers, body, bodyBase64}` instead — needed whenever a creature must tell a 401 from a 200 or read a header the server returns (an MCP session id, a rate-limit hint). Header names come back lowercased. |
 | `verifyProgramExecution` (`elpifyProof`) | Verify a program-execution proof via the provable runtime plugin. |
 | *anything else* | Forwarded to the unified host-call dispatcher (`signalUser`, `signalGroup`, …), with `programId`/`machineId` injected. |
 
@@ -340,6 +347,68 @@ result is returned verbatim as the `RESPONSE`. When another creature signals the
 machine, the node pushes a `SIGNAL` frame onto the container's connection instead
 of cold-spawning a new VM. Config: `DOCKER_HOST_GATEWAY_PORT` (≤ 0 disables) and
 `DOCKER_HOST_GATEWAY_ADVERTISE_HOST` (default `host.docker.internal`).
+
+---
+
+## The gateway subscription channel (`/gateway/*`)
+
+The two fan-out paths above both need the receiver to **be** a creature:
+`signal_user` addresses one by id, and `signal_store` resolves a store's
+members from their access grants. A program running *beside* a VM — the crewAI
+bridge inside a Modal sandbox, say — is neither. It has no Caspar key, so it
+cannot sign an action, and no host ABI, because it is not the VM.
+
+Such a program authenticates with a **bearer token its owning creature
+minted**, and that grant is the whole of its authority.
+
+```text
+  creature ── registerBridgeToken ─►  grant: token hash → topics + owner
+  bridge   ── /gateway/subscribe ──►  bound to those topics on this socket
+  bridge   ── /gateway/signal ─────►  signals the granting creature
+  creature ── publishUpdate ───────►  every subscriber of the topic
+```
+
+**Creature side (host ops):**
+
+- `registerBridgeToken {token, topics[], ttlSecs, deliverTo}` — mint or replace
+  a grant. The owner is the node-resolved calling program, never an input
+  field. `deliverTo` names the creature the bridge's inbound signals reach, and
+  is usually a *different* creature from the minter: a space's `create` mints
+  the grant, but the bridge's messages belong to the crew creature that handles
+  them. It is not an escalation — a creature can already signal any creature
+  directly.
+- `revokeBridgeToken {token | tokenHash}` — drop it. Revoking an unknown token
+  is a no-op, so a bridge tearing itself down twice does not fail.
+- `publishUpdate {topic, key, data}` — push one packet to every connection
+  subscribed to a topic this creature owns.
+
+**Bridge side (anonymous client actions):**
+
+- `/gateway/subscribe {token, topics[]}` — verifies the token and answers with
+  the granted topics. A requested list can only ever *narrow* the grant.
+- `/gateway/unsubscribe {token}`.
+- `/gateway/signal {token, topic, action, payload, correlationId}` — the
+  inbound direction. The target creature is taken from the **grant**
+  (`deliverTo`), not the request, so a token can only reach the handler its
+  owner nominated.
+
+Properties worth knowing:
+
+- The token is stored only as its SHA-256, so a state dump hands nobody a
+  working credential.
+- A topic is claimed by the creature that first grants it — in practice by its
+  **owner**, since a deployment is many creatures (each action is its own
+  program) and the one that mints a grant is a sibling of the one that later
+  publishes to it. Another tenant's creature is refused, which is the property
+  that matters.
+- Delivery never blocks the publisher: a subscriber's sink hands the frame to
+  that connection's own outbound queue and returns.
+- A subscriber whose connection has gone is reaped on the next publish, and
+  dropped outright when its socket closes — a bridge that reconnects (a sandbox
+  restart) must not leave its predecessor behind.
+- The action authenticates; the **transport** binds the socket, because only it
+  can write to the connection. That is why `/gateway/subscribe` returns a
+  `gatewaySubscribe` block the WS driver consumes.
 
 ---
 

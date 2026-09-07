@@ -2,7 +2,7 @@
 
 Caspar is a single Rust binary (`caspar-node`) that runs several concurrent
 services and hosts user logic as WebAssembly **creatures**, while being able to
-spawn subordinate VMs in six different runtimes. This page describes each
+spawn subordinate VMs in seven different runtimes. This page describes each
 headline feature in its own section, briefly and completely.
 
 ---
@@ -38,12 +38,12 @@ single `hostCall` ABI (see [Protocol](05-caspar-protocol.md#the-host-call-abi)).
 
 ## Unified multi-runtime VM router
 
-`build` / `run` / `exec` / `copy` / `terminate` operations dispatch to six
+`build` / `run` / `exec` / `copy` / `terminate` / `delete` operations dispatch to seven
 runtimes through one runtime-agnostic code path (`dispatch_packet` /
 `route_vm_packet`). Each operation injects a canonical `"type"` field and
 delegates; the router is the single locus of per-runtime branching, so adding a
-runtime is a one-file change. The six runtimes are `wasm`, `docker`, `elpify`,
-`elpian`, `javascript`, `fire` — see
+runtime is a one-file change. The seven runtimes are `wasm`, `docker`, `elpify`,
+`elpian`, `javascript`, `fire`, `modal` — see
 [VM Types](07-vm-types-and-implementation.md).
 
 ---

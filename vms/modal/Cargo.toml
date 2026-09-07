@@ -1,0 +1,25 @@
+[package]
+name = "caspar-vm-modal"
+version = "0.1.0"
+edition = "2021"
+description = "Caspar VM plugin: Modal cloud sandbox runtime (key: modal)"
+
+[lib]
+name = "caspar_vm_modal"
+path = "src/lib.rs"
+
+[dependencies]
+caspar-vm-sdk = { path = "../../vm-sdk" }
+base64 = "0.22"
+futures-util = "0.3"
+prost = "0.13"
+prost-types = "0.13"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros"] }
+tonic = { version = "0.12", features = ["tls", "tls-webpki-roots"] }
+uuid = { version = "1", features = ["v4"] }
+
+[build-dependencies]
+protox = "0.7"
+tonic-build = { version = "0.12", default-features = false, features = ["prost"] }

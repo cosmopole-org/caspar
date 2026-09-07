@@ -5,6 +5,7 @@
 pub mod auth;
 pub mod command;
 pub mod creatures;
+pub mod gateway;
 pub mod invites;
 pub mod plugin;
 pub mod program;

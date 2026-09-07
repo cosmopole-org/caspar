@@ -61,7 +61,7 @@ fn normalize_entity_type(s: &str) -> String {
 /// the same transaction. In that case, use the link as a compatibility fallback.
 /// We deliberately fail closed when no linked owner exists or more than one
 /// linked machine is found.
-fn resolve_program_owner_machine(trx: &dyn ITrx, program: &Program) -> Creature {
+pub(crate) fn resolve_program_owner_machine(trx: &dyn ITrx, program: &Program) -> Creature {
     let canonical = Creature {
         id: program.machine_id.clone(),
         ..Default::default()
@@ -137,6 +137,43 @@ fn build_stop_input_from_plan(
         }
     }
     Ok(stop_input)
+}
+
+/// Execute a runtime plugin's *delete* plan against the current transaction.
+///
+/// Same contract as [`build_stop_input_from_plan`] — the plan names the state
+/// links a given runtime needs resolved into its packet — but resolved from
+/// `plan_delete_entity`, and always strict: a delete that cannot address the
+/// concrete instance must fail rather than destroy the wrong one (or nothing,
+/// silently).
+fn build_delete_input_from_plan(
+    app: &Arc<dyn ICore>,
+    trx: &dyn ITrx,
+    runtime: &str,
+    ctx: &Value,
+) -> Result<Map<String, Value>> {
+    let plan = app
+        .tools()
+        .vmm()
+        .plan_delete_entity(runtime, ctx)
+        .map_err(|e| anyhow!(e))?;
+    let mut delete_input: Map<String, Value> =
+        plan["input"].as_object().cloned().unwrap_or_default();
+    if let Some(links) = plan["links"].as_array() {
+        for query in links {
+            let field = query["field"].as_str().unwrap_or("");
+            let key = query["key"].as_str().unwrap_or("");
+            if field.is_empty() || key.is_empty() {
+                continue;
+            }
+            let value = trx.get_link(key);
+            if value.is_empty() && query["required"].as_bool().unwrap_or(false) {
+                return Err(anyhow!("entity runtime links are not found"));
+            }
+            delete_input.insert(field.to_string(), json!(value));
+        }
+    }
+    Ok(delete_input)
 }
 
 fn as_i64(raw: &Value) -> Option<i64> {
@@ -892,6 +929,119 @@ fn stop_program_entity(app: Arc<dyn ICore>) -> Arc<dyn ISecureAction> {
             });
             app_for_handler.tools().vmm().vm_callback(&msg.to_string());
             Ok(json!({}))
+        },
+    )
+}
+
+/// `/programs/deleteEntity` — permanently destroy one VM instance of a
+/// deployed program entity.
+///
+/// This is the destructive sibling of `/programs/stopEntity`. Stop suspends:
+/// the instance can be resumed and its persistent volume survives, which is
+/// why a stopped VM still leaves its container, sandbox or disk behind.
+/// Delete asks the runtime to destroy the instance and everything it owns,
+/// then drops every state link that described it — the VM cannot come back.
+///
+/// Access control matches `stopEntity` exactly: only the recorded owner of the
+/// program may delete its instances. The owner is resolved from the program
+/// record (never the deprecated `app_id` pointer), so a creature that merely
+/// knows a vm id cannot destroy somebody else's VM.
+fn delete_program_entity(app: Arc<dyn ICore>) -> Arc<dyn ISecureAction> {
+    let app_for_handler = app.clone();
+    build_secure_action::<RunProgramEntityInput, _>(
+        app,
+        "/programs/deleteEntity",
+        user_guard(),
+        move |state: Arc<dyn IState>, input: RunProgramEntityInput| -> Result<Value> {
+            let trx = state.trx();
+            let program_id = if input.program_id.is_empty() {
+                input.machine_id.clone()
+            } else {
+                input.program_id.clone()
+            };
+            if !trx.has_obj("Program", &program_id) {
+                return Err(anyhow!("program does not exist"));
+            }
+            let program = Program {
+                id: program_id.clone(),
+                ..Default::default()
+            }
+            .pull(&*trx);
+            let entity = Entity {
+                program_id: program.id.clone(),
+                entity_id: input.entity_id.clone(),
+                ..Default::default()
+            }
+            .pull(&*trx);
+            if entity.entity_id.is_empty() {
+                return Err(anyhow!("entity does not exist"));
+            }
+            let entity_type = normalize_entity_type(&entity.entity_type);
+            let owner_machine = resolve_program_owner_machine(&*trx, &program);
+            if owner_machine.owner_id != state.info().user_id() {
+                return Err(anyhow!("you are not owner of this program"));
+            }
+            let vm_id = input.vm_id.trim().to_string();
+            if vm_id.is_empty() {
+                return Err(anyhow!("vmId is required"));
+            }
+            // The instance must belong to THIS entity. Without the check a
+            // caller who owns one program could pass any vm id and have the
+            // runtime destroy an instance that program never launched.
+            let instance_key = format!(
+                "VmInstance::{}::{}::{}",
+                program.id, input.entity_id, vm_id
+            );
+            if trx.get_link(&instance_key).is_empty() {
+                return Err(anyhow!("vm does not belong to this entity"));
+            }
+
+            // Build the delete packet BEFORE dropping the links: the plan
+            // resolves per-runtime state (a recorded container name, a sandbox
+            // id) that only exists while those links do.
+            let ctx = json!({
+                "machineId": input.machine_id,
+                "programId": program.id,
+                "entityId": entity.entity_id,
+                "vmId": vm_id,
+            });
+            let delete_input =
+                build_delete_input_from_plan(&app_for_handler, &*trx, &entity_type, &ctx)?;
+            let result = app_for_handler
+                .tools()
+                .vmm()
+                .delete_vm_instance(&Value::Object(delete_input));
+            if !result["ok"].as_bool().unwrap_or(false) {
+                let err = result["error"]
+                    .as_str()
+                    .unwrap_or("vm delete failed")
+                    .to_string();
+                return Err(anyhow!(err));
+            }
+
+            // The runtime destroyed it, so forget it. Doing this only after a
+            // successful delete keeps a failed destroy visible (and retryable)
+            // instead of leaving a live VM with no record.
+            trx.del_key(&format!("link::VmStatus::{}", vm_id));
+            trx.del_key(&format!("link::VmStartedAt::{}", vm_id));
+            trx.del_key(&instance_key);
+            trx.del_key(&format!("link::VmBilling::{}", vm_id));
+            trx.del_json(&format!("Json::VmBilling::{}", vm_id), "payment");
+            trx.del_key(&format!("link::vmDistributed::{}", vm_id));
+            trx.del_key(&format!("link::VmOwnerProgram::{}", vm_id));
+            trx.del_key(&format!(
+                "link::VmContainerName::{}::{}::{}",
+                program.id, input.entity_id, vm_id
+            ));
+            trx.del_key(&format!(
+                "link::vmStandaloneImageName::{}::{}",
+                program.id, input.entity_id
+            ));
+            trx.del_key(&format!(
+                "link::vmStandaloneContainerName::{}::{}",
+                program.id, input.entity_id
+            ));
+            Ok(json!({"ok": true, "vmId": vm_id, "result": result}))
         },
     )
 }
@@ -1680,6 +1830,7 @@ pub fn install(app: Arc<dyn ICore>) {
         update_program(app.clone()),
         run_program_entity(app.clone()),
         stop_program_entity(app.clone()),
+        delete_program_entity(app.clone()),
         list_entity_vms(app.clone()),
         read_vm_logs(app.clone()),
         open_vm_terminal(app.clone()),

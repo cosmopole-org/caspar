@@ -26,6 +26,7 @@ pub fn plug_all(
     actions::auth::install(app.clone());
     actions::creature::install(app.clone(), clone_model_extender(model_extender));
     actions::dummy::install(app.clone());
+    actions::gateway::install(app.clone());
     actions::program::install(app.clone());
     actions::store::install(app.clone());
 }

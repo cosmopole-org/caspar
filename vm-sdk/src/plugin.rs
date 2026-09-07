@@ -25,6 +25,32 @@ pub trait VmPlugin: Send + Sync {
     /// Stop a VM (suspend by default; runtimes may honour `purge`).
     fn terminate_vm(&self, packet: &Value) -> Result<Value, String>;
 
+    /// Permanently destroy a VM and everything it owns.
+    ///
+    /// Where [`VmPlugin::terminate_vm`] suspends (the instance can be resumed
+    /// by a later `run_vm`), delete is final: the container/microVM/sandbox is
+    /// removed, its persistent volume is dropped, and no state remains for a
+    /// resume to find. The default implementation is the one every runtime
+    /// already supports — a terminate carrying `purge`/`delete`, which the
+    /// runtimes that distinguish the two honour by removing rather than
+    /// stopping. Runtimes with resources a purge does not reach (a cloud
+    /// sandbox, a remote volume, a built image) override this.
+    fn delete_vm(&self, packet: &Value) -> Result<Value, String> {
+        let mut purge = packet.clone();
+        if let Some(obj) = purge.as_object_mut() {
+            obj.insert("purge".to_string(), Value::Bool(true));
+            obj.insert("delete".to_string(), Value::Bool(true));
+        }
+        let terminated = self.terminate_vm(&purge)?;
+        Ok(json!({
+            "ok": true,
+            "runtime": self.meta().key,
+            "deleted": true,
+            "vmId": packet["vmId"].as_str().unwrap_or("main"),
+            "terminate": terminated,
+        }))
+    }
+
     /// Inspect a VM without mutating it.
     ///
     /// Runtimes with an external process/container should override this and
@@ -63,6 +89,25 @@ pub trait VmPlugin: Send + Sync {
         ))
     }
 
+    /// The public endpoints a running VM is reachable on, if any.
+    ///
+    /// Runtimes that publish a VM's ports somewhere reachable — a cloud
+    /// sandbox's tunnels, say — answer with them here, so a creature can hand
+    /// a person a URL for the thing running inside its own VM (a desktop, a
+    /// preview server) without the node inventing a scheme for it. Runtimes
+    /// with nothing public return an empty list rather than an error: having
+    /// no public endpoint is an ordinary state, not a failure.
+    ///
+    /// Returns `{ ok, endpoints: [{ containerPort, url, host, port }] }`.
+    fn vm_endpoints(&self, packet: &Value) -> Result<Value, String> {
+        let _ = packet;
+        Ok(json!({
+            "ok": true,
+            "runtime": self.meta().key,
+            "endpoints": [],
+        }))
+    }
+
     /// Build the deployable image/module for an entity of this runtime.
     fn build_image(&self, packet: &Value) -> Result<Value, String> {
         let _ = packet;
@@ -85,6 +130,9 @@ pub trait VmPlugin: Send + Sync {
     }
     fn pause(&self, packet: &Value) -> Result<Value, String> {
         self.terminate_vm(packet)
+    }
+    fn destroy(&self, packet: &Value) -> Result<Value, String> {
+        self.delete_vm(packet)
     }
 
     // ── Snapshot restore ──────────────────────────────────────────────────
@@ -161,6 +209,27 @@ pub trait VmPlugin: Send + Sync {
         }))
     }
 
+    /// Plan a `deleteVm` for a deployed program entity.
+    ///
+    /// `ctx`: `{ machineId, programId, entityId, vmId }`. Shaped exactly like
+    /// [`VmPlugin::plan_stop_entity`] — same `{input, links}` contract, so the
+    /// program API resolves the same per-runtime state links (a recorded
+    /// container name, a sandbox id) before dispatching. The default derives
+    /// the plan from the stop plan and re-points it at the delete packet, so a
+    /// runtime that overrode only `plan_stop_entity` still deletes correctly.
+    fn plan_delete_entity(&self, ctx: &Value) -> Result<Value, String> {
+        let mut plan = self.plan_stop_entity(ctx)?;
+        if let Some(input) = plan["input"].as_object_mut() {
+            input.insert("purge".to_string(), Value::Bool(true));
+            input.insert("delete".to_string(), Value::Bool(true));
+            input.insert(
+                "programId".to_string(),
+                ctx["programId"].clone(),
+            );
+        }
+        Ok(plan)
+    }
+
     /// Translate a host-call `terminateVm` input into the typed terminate
     /// packet dispatched to the packet router.
     fn build_terminate_request(&self, input: &Value) -> Result<Value, String> {
@@ -172,6 +241,29 @@ pub trait VmPlugin: Send + Sync {
             "machineId": input["machineId"].as_str().unwrap_or(""),
             "vmId": vm_id,
         }))
+    }
+
+    /// Translate a host-call `deleteVm` input into the typed delete packet
+    /// dispatched to the packet router.
+    ///
+    /// A delete always names one concrete instance: unlike terminate, there is
+    /// no "stop whatever this machine is running" fallback, because deleting
+    /// by machine alone would destroy instances the caller never named.
+    fn build_delete_request(&self, input: &Value) -> Result<Value, String> {
+        let vm_id = input["vmId"].as_str().unwrap_or("").trim();
+        if vm_id.is_empty() {
+            return Err(format!(
+                "deleteVm requires a vmId for the {} runtime",
+                self.meta().key
+            ));
+        }
+        let mut packet = self.build_terminate_request(input)?;
+        if let Some(obj) = packet.as_object_mut() {
+            obj.insert("type".to_string(), Value::String("deleteVm".to_string()));
+            obj.insert("purge".to_string(), Value::Bool(true));
+            obj.insert("delete".to_string(), Value::Bool(true));
+        }
+        Ok(packet)
     }
 
     // ── Inbound HTTP forwarding ───────────────────────────────────────────

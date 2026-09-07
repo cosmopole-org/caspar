@@ -72,6 +72,30 @@ impl VmPlugin for ElpianVmController {
         Ok(json!({"ok": true, "runtime": "elpian", "machineId": machine_id}))
     }
 
+    /// Elpian programs run to completion synchronously, so a delete is a
+    /// destroy of any live instance plus the disposal of the lifecycle
+    /// transaction and execution context the run left behind.
+    fn delete_vm(&self, packet: &JsonValue) -> Result<JsonValue, String> {
+        let machine_id = packet["machineId"].as_str().unwrap_or("");
+        if machine_id.is_empty() {
+            return Err("machineId is required".to_string());
+        }
+        let vm_id = packet["vmId"].as_str().unwrap_or("main");
+        let _ = elpian_vm::api::destroy_vm(machine_id.to_string());
+        if let Some(h) = caspar_vm_sdk::host::host() {
+            h.end_vm_json_trx(vm_id);
+            h.commit_vm_buffer(vm_id);
+            h.unregister_vm_context(vm_id);
+        }
+        Ok(json!({
+            "ok": true,
+            "runtime": "elpian",
+            "machineId": machine_id,
+            "vmId": vm_id,
+            "deleted": true,
+        }))
+    }
+
     fn exec_vm(&self, packet: &JsonValue) -> Result<JsonValue, String> {
         self.start(packet)
     }

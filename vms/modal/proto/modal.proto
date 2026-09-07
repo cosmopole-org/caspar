@@ -1,0 +1,1080 @@
+// GENERATED SLICE — do not hand-edit.
+//
+// Produced by scripts/slice_modal_proto.py from modal-labs/modal-client's
+// modal_proto/api.proto. It carries only the messages and RPCs the Caspar
+// modal VM plugin calls, with upstream field numbers preserved, so it is wire
+// compatible with Modal's server while keeping the generated Rust small.
+//
+// Modal states that direct gRPC use carries no compatibility guarantee; when
+// an upstream change breaks a call, re-run the slicer against the new proto.
+
+syntax = "proto3";
+
+package modal.client;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+import "google/protobuf/any.proto";
+
+message AppGetOrCreateRequest {
+  string app_name = 1;
+  string environment_name = 2;
+  ObjectCreationType object_creation_type = 3;
+}
+
+message AppGetOrCreateResponse {
+  string app_id = 1;
+  AppHandleMetadata handle_metadata = 2;
+}
+
+message AppHandleMetadata {
+  string description = 1;
+  string app_id = 2;
+  string environment_name = 3;
+  AppLifecycle lifecycle = 4;
+  map<string, string> functions = 5;  // tag -> function id
+  map<string, string> servers = 6;  // tag -> function id
+}
+
+message AppLifecycle {
+  AppState app_state = 1;
+  double created_at = 2;
+  string created_by = 3;  // User or service user name
+  double deployed_at = 4; // Most recent deployment event
+  string deployed_by = 5;  // User or service user name
+  int32 version = 6;  // Only meaningful when App is deployed
+  double stopped_at = 7;  // Unset when App is still running
+  string stopped_by = 8;  // User or service user name, null if running or ephemeral App that finished normally
+}
+
+enum AppState {
+  APP_STATE_UNSPECIFIED = 0;
+
+  // Will be discharged when the client disconnects
+  APP_STATE_EPHEMERAL = 1;
+
+  APP_STATE_DETACHED = 2;
+
+  // Will be discharged when overwritten
+  APP_STATE_DEPLOYED = 3;
+
+  // Winding down app due to user termination.
+  APP_STATE_STOPPING = 4;
+
+  // Stopped
+  APP_STATE_STOPPED = 5;
+
+  // App is created and in process of deployment.
+  APP_STATE_INITIALIZING = 6;
+
+  // Same as stopped but prevented from being garbage collected
+  APP_STATE_DISABLED = 7;
+
+  // App is detached and local client has disconnected.
+  APP_STATE_DETACHED_DISCONNECTED = 8;
+
+  // App is derived from another workspace. Acts as a static, immutable group of functions.
+  APP_STATE_DERIVED = 9 [deprecated=true];
+}
+
+message AppStopRequest {
+  string app_id = 1;
+  AppStopSource source = 2;
+}
+
+enum AppStopSource {
+  APP_STOP_SOURCE_UNSPECIFIED = 0;
+  APP_STOP_SOURCE_CLI = 1;
+  APP_STOP_SOURCE_PYTHON_CLIENT = 2;
+  APP_STOP_SOURCE_WEB = 3;
+}
+
+enum Arch {
+  ARCH_UNSPECIFIED = 0;
+  ARCH_X86_64 = 1;
+  ARCH_AARCH64 = 2;
+}
+
+message BaseImage {
+  string image_id = 1;
+  string docker_tag = 2;
+  reserved 4;
+}
+
+message BuildFunction {
+  string definition = 1;
+  bytes globals = 2;
+  FunctionInput input = 3;
+}
+
+message CloudBucketMount {
+  enum BucketType {
+    UNSPECIFIED = 0;
+    S3 = 1;
+    R2 = 2;
+    GCP = 3;
+  }
+
+  enum MetadataTTLType {
+    METADATA_TTL_TYPE_UNSPECIFIED = 0;
+    METADATA_TTL_TYPE_MINIMAL = 1;
+    METADATA_TTL_TYPE_INDEFINITE = 2;
+  }
+
+  string bucket_name = 1;
+  string mount_path = 2;
+  string credentials_secret_id = 3;
+  bool read_only = 4;
+  BucketType bucket_type = 5;
+  bool requester_pays = 6;
+  optional string bucket_endpoint_url = 7;
+  optional string key_prefix = 8;
+  optional string oidc_auth_role_arn = 9;
+  bool force_path_style = 10;
+  oneof metadata_ttl_oneof {
+    MetadataTTLType metadata_ttl_type = 11;
+    uint64 metadata_ttl_seconds = 12;
+  }
+}
+
+enum CloudProvider {
+  CLOUD_PROVIDER_UNSPECIFIED = 0;
+  CLOUD_PROVIDER_AWS = 1;
+  CLOUD_PROVIDER_GCP = 2;
+  CLOUD_PROVIDER_AUTO = 3;
+  CLOUD_PROVIDER_OCI = 4;
+  reserved 5, 6, 7, 8; // now unused internal experimental values
+}
+
+message ContainerExecGetOutputRequest {
+  string exec_id = 1;
+  float timeout = 2;
+  uint64 last_batch_index = 3;
+  FileDescriptor file_descriptor = 4;
+  // Old clients (up to 0.65.39) expect string output. Newer clients stream raw bytes
+  bool get_raw_bytes = 5;
+}
+
+message ContainerExecRequest {
+  string task_id = 1;
+  repeated string command = 2;
+  // If pty_info is provided, open a PTY, but also this container exec is treated an
+  // "interactive shell" request, and it will be terminated if messages are not periodically
+  // sent on the stdin stream on some interval (currently 40 seconds).
+  optional PTYInfo pty_info = 3;
+  // Send SIGTERM to running container on exit of exec command.
+  bool terminate_container_on_exit = 4 [deprecated=true];
+  bool runtime_debug = 5; // For internal debugging use only.
+  ExecOutputOption stdout_output = 6;
+  ExecOutputOption stderr_output = 7;
+  uint32 timeout_secs = 8;
+  optional string workdir = 9;
+  repeated string secret_ids = 10;
+}
+
+message ContainerExecResponse {
+  string exec_id = 1;
+}
+
+message ContainerExecWaitRequest {
+  string exec_id = 1;
+  float timeout = 2;
+}
+
+message ContainerExecWaitResponse {
+  optional int32 exit_code = 1;
+  bool completed = 2;
+}
+
+message ContainerFileCloseRequest {
+  string file_descriptor = 1;
+}
+
+message ContainerFileDeleteBytesRequest {
+  string file_descriptor = 1;
+  optional uint32 start_inclusive = 2;
+  optional uint32 end_exclusive = 3;
+}
+
+message ContainerFileFlushRequest {
+  string file_descriptor = 1;
+}
+
+message ContainerFileLsRequest {
+  string path = 1;
+}
+
+message ContainerFileMkdirRequest {
+  string path = 1;
+  bool make_parents = 2;
+}
+
+message ContainerFileOpenRequest {
+  // file descriptor is hydrated when sent from server -> worker
+  optional string file_descriptor = 1;
+  string path = 2;
+  string mode = 3;
+}
+
+message ContainerFileReadLineRequest {
+  string file_descriptor = 1;
+}
+
+message ContainerFileReadRequest {
+  string file_descriptor = 1;
+  optional uint32 n = 2;
+}
+
+message ContainerFileRmRequest {
+  string path = 1;
+  bool recursive = 2;
+}
+
+message ContainerFileSeekRequest {
+  string file_descriptor = 1;
+  int32 offset = 2;
+  SeekWhence whence = 3;
+}
+
+message ContainerFileWatchRequest {
+  string path = 1;
+  bool recursive = 2;
+  optional uint64 timeout_secs = 3;
+}
+
+message ContainerFileWriteReplaceBytesRequest {
+  string file_descriptor = 1;
+  bytes data = 2;
+  optional uint32 start_inclusive = 3;
+  optional uint32 end_exclusive = 4;
+}
+
+message ContainerFileWriteRequest {
+  string file_descriptor = 1;
+  bytes data = 2;
+}
+
+message ContainerFilesystemExecGetOutputRequest {
+  string exec_id = 1;
+  float timeout = 2;
+}
+
+message ContainerFilesystemExecRequest {
+  oneof file_exec_request_oneof {
+    ContainerFileOpenRequest file_open_request = 1;
+    ContainerFileWriteRequest file_write_request = 2;
+    ContainerFileReadRequest file_read_request = 3;
+    ContainerFileFlushRequest file_flush_request = 4;
+    ContainerFileReadLineRequest file_read_line_request = 5;
+    ContainerFileSeekRequest file_seek_request = 6;
+    ContainerFileDeleteBytesRequest file_delete_bytes_request = 7;
+    ContainerFileWriteReplaceBytesRequest file_write_replace_bytes_request = 8;
+    ContainerFileCloseRequest file_close_request = 9;
+    ContainerFileLsRequest file_ls_request = 11;
+    ContainerFileMkdirRequest file_mkdir_request = 12;
+    ContainerFileRmRequest file_rm_request = 13;
+    ContainerFileWatchRequest file_watch_request = 14;
+  }
+  string task_id = 10;
+}
+
+message ContainerFilesystemExecResponse {
+  string exec_id = 1;
+  // only set when the request opens a new file, i.e., ContainerFileOpenRequest
+  optional string file_descriptor = 2;
+}
+
+message CreationInfo {
+  // This message is used in metadata for resource objects like Dict, Queue, Volume, etc.
+  double created_at = 1;  // Timestamp of resource creation
+  string created_by = 2;  // User name or service name
+}
+
+enum DataFormat {
+  DATA_FORMAT_UNSPECIFIED = 0;
+  DATA_FORMAT_PICKLE = 1; // Cloudpickle
+  DATA_FORMAT_ASGI = 2; // "Asgi" protobuf message
+  DATA_FORMAT_GENERATOR_DONE = 3; // "GeneratorDone" protobuf message
+  DATA_FORMAT_CBOR = 4;
+}
+
+enum DeploymentNamespace {
+  DEPLOYMENT_NAMESPACE_UNSPECIFIED = 0;
+  DEPLOYMENT_NAMESPACE_WORKSPACE = 1;
+  DEPLOYMENT_NAMESPACE_GLOBAL = 3;
+}
+
+enum ExecOutputOption {
+  EXEC_OUTPUT_OPTION_UNSPECIFIED = 0;
+  EXEC_OUTPUT_OPTION_DEVNULL = 1;
+  EXEC_OUTPUT_OPTION_PIPE = 2;
+  EXEC_OUTPUT_OPTION_STDOUT = 3;
+}
+
+enum FileDescriptor {
+  FILE_DESCRIPTOR_UNSPECIFIED = 0;
+  FILE_DESCRIPTOR_STDOUT = 1;
+  FILE_DESCRIPTOR_STDERR = 2;
+  FILE_DESCRIPTOR_INFO = 3;
+}
+
+message FilesystemRuntimeOutputBatch {
+  repeated bytes output = 1;
+  optional SystemErrorMessage error = 2;
+  uint64 batch_index = 3;
+  bool eof = 4;
+}
+
+message FunctionInput {
+  // serialized (args, kwargs).
+  oneof args_oneof {
+    bytes args = 1;
+    string args_blob_id = 7;
+  }
+  bool final_input = 9;
+  DataFormat data_format = 10; // For args_oneof.
+  optional string method_name = 11; // specifies which method to call when calling a class/object function
+}
+
+message GPUConfig {
+  GPUType type = 1;  // Deprecated, at some point
+  uint32 count = 2;
+  string gpu_type = 4;
+}
+
+enum GPUType {
+  // Note: this enum is no longer used by current clients - don't add new types
+  // Old clients still send it, so we use it server-side for compatibility
+  GPU_TYPE_UNSPECIFIED = 0;
+  GPU_TYPE_T4 = 1;
+  GPU_TYPE_A100 = 2;
+  GPU_TYPE_A10G = 3;
+  GPU_TYPE_ANY = 4;
+  GPU_TYPE_A100_80GB = 8;
+  GPU_TYPE_L4 = 9;
+  GPU_TYPE_H100 = 10;
+  GPU_TYPE_L40S = 11;
+  GPU_TYPE_H200 = 12;
+}
+
+message GenericResult {  // Used for both tasks and function outputs
+  enum GenericStatus {
+    GENERIC_STATUS_UNSPECIFIED = 0;
+    GENERIC_STATUS_SUCCESS = 1;
+    GENERIC_STATUS_FAILURE = 2;
+    // Used when a task was killed using an external signal.
+    GENERIC_STATUS_TERMINATED = 3;
+    GENERIC_STATUS_TIMEOUT = 4;
+    // Used when the user's function fails to initialize (ex. S3 mount failed due to invalid credentials).
+    // Terminates the function and all remaining inputs.
+    GENERIC_STATUS_INIT_FAILURE = 5;
+    GENERIC_STATUS_INTERNAL_FAILURE = 6;
+    // Used when sandboxes are terminated due to idle_timeout
+    GENERIC_STATUS_IDLE_TIMEOUT = 7;
+    // Used when a task was killed because it was evicted by the memory manager when the worker was
+    // under memory pressure.
+    GENERIC_STATUS_MEMORY_MANAGER_EVICTION = 8;
+  }
+
+  GenericStatus status = 1; // Status of the task or function output.
+  string exception = 2;  // Exception message for failures, if available.
+  int32 exitcode = 3;  // Status code of the container entrypoint or builder process if it terminates unexpectedly.
+
+  string traceback = 4;  // String value of the Python traceback.
+  bytes serialized_tb = 11; // Pickled traceback object.
+  bytes tb_line_cache = 12; // Pickled line cache for traceback object.
+
+  oneof data_oneof {
+    bytes data = 5; // Inline data of the result.
+    string data_blob_id = 10; // Blob ID for large data.
+  }
+
+  string propagation_reason = 13; // (?)
+}
+
+message Image {
+  repeated BaseImage base_images = 5;
+  repeated string dockerfile_commands = 6;
+  repeated ImageContextFile context_files = 7;
+  string version = 11;
+  repeated string secret_ids = 12;
+  // Part of Image definition, because presence of GPU drivers
+  // affects the image that's built.
+  string context_mount_id = 15;
+  GPUConfig gpu_config = 16;
+  ImageRegistryConfig image_registry_config = 17;
+
+  string build_function_def = 14; // deprecated after 0.58.96
+  bytes build_function_globals = 18; // deprecated after 0.58.96
+
+  // If set, overrides the runtime used by the function. Specify either "runc" or "gvisor".
+  string runtime = 19;
+  // Not included in image definition checksum as debug features do not affect built image.
+  bool runtime_debug = 20;
+
+  BuildFunction build_function = 21;
+
+  // Build arguments for the image (--build-arg) for ARG substitution in Dockerfile.
+  map<string, string> build_args = 22;
+
+  // Volume mount for RUN commands
+  repeated VolumeMount volume_mounts = 23;
+
+  // CPU architecture the image is built for. Images with an unspecified
+  // arch predate this field and are treated as x86_64.
+  Arch arch = 24;
+}
+
+message ImageContextFile {
+  string filename = 1;
+  bytes data = 2;
+}
+
+message ImageGetOrCreateRequest {
+  Image image = 2;
+  string app_id = 4;
+  string existing_image_id = 5;  // ignored
+  string build_function_id = 6;
+  bool force_build = 7;
+  DeploymentNamespace namespace = 8;
+  string builder_version = 9;
+  // Only admins can publish global images, but this provides an extra failsafe
+  bool allow_global_deployment = 10;
+  // Force the Image to build but don't clobber any Images with the same recipe in the cache
+  bool ignore_cache = 11;
+}
+
+message ImageGetOrCreateResponse {
+  // image_id is set regardless if the image is built (use ImageJoinStreaming to wait for build)
+  string image_id = 1;
+  // result of build - only set if the image has finished building (regardless if success or not)
+  GenericResult result = 2;
+  // image metadata - only set if the image has built successfully
+  ImageMetadata metadata = 3;
+}
+
+message ImageJoinStreamingRequest {
+  string image_id = 1;
+  float timeout = 2;
+  string last_entry_id = 3;
+  bool include_logs_for_finished = 4;
+}
+
+message ImageJoinStreamingResponse {
+  GenericResult result = 1;
+  repeated TaskLogs task_logs = 2;
+  string entry_id = 3;
+  bool eof = 4;
+  ImageMetadata metadata = 5;  // set on success
+}
+
+message ImageMetadata {
+  // The output of `python -VV. Not set if missing
+  optional string python_version_info = 1;
+
+  // Installed python packages, as listed by by `pip list`.
+  // package name -> version. Empty if missing
+  map<string, string> python_packages = 2;
+
+  // The working directory of the image, as an absolute file path.
+  //
+  // For most images, this is not set, which means to use the default workdir:
+  // - On function runners, the default is `/root` (home directory).
+  // - For image builds and sandbox environments, it is `/`.
+  optional string workdir = 3;
+
+  // The version of glibc in this image, if any.
+  optional string libc_version_info = 4;
+
+  // The builder version for/with which the image was created.
+  optional string image_builder_version = 5;
+}
+
+message ImageRegistryConfig {
+  RegistryAuthType registry_auth_type = 1;
+  string secret_id = 2;
+}
+
+message NetworkAccess {
+  enum NetworkAccessType {
+    UNSPECIFIED = 0;
+    OPEN = 1;
+    BLOCKED = 2;
+    ALLOWLIST = 3;
+  }
+  NetworkAccessType network_access_type = 1;
+  repeated string allowed_cidrs = 2;
+  repeated string allowed_domains = 3;
+}
+
+enum ObjectCreationType {
+  OBJECT_CREATION_TYPE_UNSPECIFIED = 0;  // just lookup
+  OBJECT_CREATION_TYPE_CREATE_IF_MISSING = 1;
+  OBJECT_CREATION_TYPE_CREATE_FAIL_IF_EXISTS = 2;
+  OBJECT_CREATION_TYPE_CREATE_OVERWRITE_IF_EXISTS = 3;
+  OBJECT_CREATION_TYPE_ANONYMOUS_OWNED_BY_APP = 4;  // deprecate at some point
+  OBJECT_CREATION_TYPE_EPHEMERAL = 5;
+}
+
+message PTYInfo {
+  bool enabled = 1;  // Soon deprecated
+  uint32 winsz_rows = 2;
+  uint32 winsz_cols = 3;
+  string env_term = 4;
+  string env_colorterm = 5;
+  string env_term_program = 6;
+  enum PTYType {
+    PTY_TYPE_UNSPECIFIED = 0;  // Nothing
+    PTY_TYPE_FUNCTION = 1;  // Run function in PTY
+    PTY_TYPE_SHELL = 2;  // Replace function with shell
+  }
+  PTYType pty_type = 7;
+  bool no_terminate_on_idle_stdin = 8;
+}
+
+message PortSpec {
+  uint32 port = 1;
+  bool unencrypted = 2;
+  optional TunnelType tunnel_type = 3;
+}
+
+message PortSpecs {
+  repeated PortSpec ports = 1;
+}
+
+message Probe {
+  message ExecCommand {
+    // Command and args to execute directly (argv form, not shell-parsed).
+    repeated string argv = 1;
+  }
+
+  oneof probe_oneof {
+    uint32 tcp_port = 1;
+    ExecCommand exec_command = 2;
+  }
+  optional uint32 interval_ms = 3;
+}
+
+enum ProgressType {
+  IMAGE_SNAPSHOT_UPLOAD = 0;  // TODO(erikbern): shouldn't be zero, and needs prefix
+  FUNCTION_QUEUED = 1;  // TODO(erikbern): needs_prefix
+}
+
+enum RegistryAuthType {
+  REGISTRY_AUTH_TYPE_UNSPECIFIED = 0; // Older clients send this instead of "public".
+  REGISTRY_AUTH_TYPE_AWS = 1;
+  REGISTRY_AUTH_TYPE_GCP = 2;
+  REGISTRY_AUTH_TYPE_PUBLIC = 3;
+  REGISTRY_AUTH_TYPE_STATIC_CREDS = 4;
+}
+
+message ResourceInfo {
+    message ResourceValue {
+      uint32 value = 1;
+      bool is_default = 2;
+    }
+    ResourceValue memory_mb = 1; // MiB
+    ResourceValue milli_cpu = 2; // milli CPU cores
+    string gpu_type = 3;
+    uint32 memory_mb_max = 4  ; // MiB
+    uint32 ephemeral_disk_mb = 5;  // MiB
+    uint32 milli_cpu_max = 6; // milli CPU cores
+}
+
+message Resources {
+  uint32 memory_mb = 2; // MiB
+  uint32 milli_cpu = 3; // milli CPU cores
+  GPUConfig gpu_config = 4;
+  uint32 memory_mb_max = 5; // MiB
+  uint32 ephemeral_disk_mb = 6;  // MiB
+  uint32 milli_cpu_max = 7; // milli CPU cores
+  bool rdma = 8; // Whether to use RDMA interfaces
+}
+
+message RuntimeOutputBatch {
+  repeated RuntimeOutputMessage items = 1;
+  uint64 batch_index = 2;
+  // if an exit code is given, this is the final message that will be sent.
+  optional int32 exit_code = 3;
+  repeated RuntimeOutputMessage stdout = 4;
+  repeated RuntimeOutputMessage stderr = 5;
+  repeated RuntimeOutputMessage info = 6;
+}
+
+message RuntimeOutputMessage {
+  // only stdout / stderr is used
+  FileDescriptor file_descriptor = 1;
+  string message = 2;
+  bytes message_bytes = 3;
+}
+
+message S3Mount {
+  string bucket_name = 1;
+  string mount_path = 2;
+  string credentials_secret_id = 3;
+  bool read_only = 4;
+}
+
+message Sandbox {
+  repeated string entrypoint_args = 1;
+  repeated string mount_ids = 2;
+  string image_id = 3;
+  repeated string secret_ids = 4;
+
+  Resources resources = 5;
+  CloudProvider cloud_provider = 6;  // Deprecated at some point
+
+  uint32 timeout_secs = 7; // The max lifetime of a sandbox in seconds.
+
+  optional string workdir = 8;
+
+  repeated SharedVolumeMount nfs_mounts = 9;
+
+  bool runtime_debug = 10; // For internal debugging use only.
+
+  bool block_network = 11; // deprecated, use network_access instead
+
+  repeated S3Mount s3_mounts = 12;
+  repeated CloudBucketMount cloud_bucket_mounts = 14;
+
+  repeated VolumeMount volume_mounts = 13;
+
+  PTYInfo pty_info = 15;
+
+  // If set, tasks will be scheduled using the new scheduler, which also knows
+  // to look at fine-grained placement constraints.
+  reserved 16; // _experimental_scheduler
+  optional SchedulerPlacement scheduler_placement = 17;
+  reserved 18;  // _experimental_resources
+
+  string worker_id = 19; // for internal debugging use only
+  oneof open_ports_oneof {
+    PortSpecs open_ports = 20;
+  }
+
+  bool i6pn_enabled = 21;
+
+  // Network access configuration beyond simple allow/block.
+  NetworkAccess network_access = 22;
+
+  optional string proxy_id = 23;
+
+  // Enable snapshotting the sandbox (both memory and filesystem).
+  // This doesn't need to be enabled to save the filesystem as an image (i.e. a filesystem-only snapshot).
+  bool enable_snapshot = 24;
+
+  // Used to pin gVisor version for memory-snapshottable sandboxes.
+  // This field is set by the server, not the client.
+  optional uint32 snapshot_version = 25;
+
+  string cloud_provider_str = 26;  // Supersedes cloud_provider
+
+  // Specifies container runtime behavior for sandboxes which are restored from a snapshot.
+  // Set by the backend at snapshot creation time.
+  optional string runsc_runtime_version = 27;
+
+  // If set, overrides the runtime used by the function, either "runc" or "gvisor".
+  optional string runtime = 28;
+
+  // If set, the sandbox will be created with verbose logging enabled.
+  bool verbose = 29;
+
+  // If set, the sandbox will be created with a name.
+  optional string name = 30;
+
+  // Deprecated: use experimental_options_v2 instead.
+  map<string, bool> experimental_options = 31 [deprecated = true];
+
+  // Experimental options
+  map<string, string> experimental_options_v2 = 41;
+
+  repeated string preload_path_prefixes = 32; // Internal use only.
+
+  // Optional idle timeout in seconds. If set, the sandbox will be terminated after being idle for this duration.
+  optional uint32 idle_timeout_secs = 33;
+
+  // Deprecated: direct sandbox commands are always enabled.
+  bool direct_sandbox_commands_enabled = 34 [deprecated = true];
+
+  // Internal: restricts sandbox to run on this specific instance type.
+  // Set by server during SandboxRestore to ensure the restored sandbox runs
+  // on the same instance type as the original snapshot.
+  string _restore_instance_type = 35;
+
+  // If set, connections to this sandbox will be subdomains of this domain rather than the default.
+  string custom_domain = 36;
+
+  // If set, the sandbox will receive a MODAL_IDENTITY_TOKEN env var,
+  // similar to how modal Function containers do. This can be used
+  // for OIDC-based authentication (e.g. to AWS, GCP).
+  bool include_oidc_identity_token = 37;
+
+  // Probe used to determine when the sandbox has become ready.
+  optional Probe readiness_probe = 38;
+
+  // If set, only connections from these CIDRs will be allowed to connect to the sandbox
+  // (tunnels and auth proxy).
+  repeated string inbound_cidr_allowlist = 39;
+
+  StringMap environment_variables = 40;
+}
+
+message SandboxCreateConnectTokenRequest {
+  string sandbox_id = 1;
+  string user_metadata = 2;
+  // Uses port 8080 if unspecified.
+  optional uint32 port = 3;
+}
+
+message SandboxCreateConnectTokenResponse {
+  string url = 1;
+  string token = 2;
+}
+
+message SandboxCreateRequest {
+  string app_id = 1;
+  Sandbox definition = 2;
+  string environment_name = 3; // *DEPRECATED* 7/16/2025
+  repeated SandboxTag tags = 4;
+}
+
+message SandboxCreateResponse {
+  string sandbox_id = 1;
+  SandboxHandleMetadata metadata = 2;
+}
+
+message SandboxGetLogsRequest {
+  string sandbox_id = 1;
+  FileDescriptor file_descriptor = 2;
+  float timeout = 3;
+  string last_entry_id = 4;
+}
+
+message SandboxGetTaskIdRequest {
+  string sandbox_id = 1;
+  optional float timeout = 2; // Legacy clients do not provide a timeout. New clients must always provide a timeout.
+  bool wait_until_ready = 3; // If true, waits until the container's postStart hook has been run before returning. Useful for detecting init failures.
+}
+
+message SandboxGetTaskIdResponse {
+  optional string task_id = 1; // This is None if the sandbox was terminated before a task could be scheduled.
+  optional GenericResult task_result = 2; // If the task has already exited, this is the result.
+}
+
+message SandboxGetTunnelsRequest {
+  string sandbox_id = 1;
+  float timeout = 2;
+}
+
+message SandboxGetTunnelsResponse {
+  GenericResult result = 1;
+  repeated TunnelData tunnels = 2;
+}
+
+message SandboxHandleMetadata {
+  GenericResult result = 1;
+  string app_id = 2;
+}
+
+message SandboxInfo {
+  string id = 1;
+  reserved 2; // modal.client.Sandbox definition
+  double created_at = 3;
+  TaskInfo task_info = 4;
+  string app_id = 5;
+  repeated SandboxTag tags = 6; // TODO: Not yet exposed in client library.
+  string name = 7;
+  string image_id = 8;
+  ResourceInfo resource_info = 9;
+  repeated string regions = 10;
+  uint32 timeout_secs = 11;
+  optional uint32 idle_timeout_secs = 12;
+  optional double ready_at = 13;
+  optional Probe readiness_probe = 14;
+  repeated TunnelData tunnels = 15;
+  SandboxHandleMetadata metadata = 16;
+}
+
+message SandboxListRequest {
+  string app_id = 1;
+  double before_timestamp = 2;
+  string environment_name = 3;
+  bool include_finished = 4;
+  repeated SandboxTag tags = 5;
+}
+
+message SandboxListResponse {
+  repeated SandboxInfo sandboxes = 1;
+}
+
+message SandboxRestoreRequest {
+  enum SandboxNameOverrideType {
+    SANDBOX_NAME_OVERRIDE_TYPE_UNSPECIFIED = 0;
+    SANDBOX_NAME_OVERRIDE_TYPE_NONE = 1;
+    SANDBOX_NAME_OVERRIDE_TYPE_STRING = 2;
+  }
+
+  string snapshot_id = 1;
+  string sandbox_name_override = 2;
+  SandboxNameOverrideType sandbox_name_override_type = 3;
+  string worker_id = 4; // For internal debugging use only.
+  bool replace_volume_mounts = 5;
+  repeated VolumeMount volume_mounts = 6;
+}
+
+message SandboxRestoreResponse {
+  string sandbox_id = 1;
+}
+
+message SandboxSnapshotFsRequest {
+  string sandbox_id = 1;
+  float timeout = 2;
+}
+
+message SandboxSnapshotFsResponse {
+  string image_id = 1;
+  GenericResult result = 2;
+  // Metadata may be empty since we may skip it for performance reasons.
+  ImageMetadata image_metadata = 3;
+}
+
+message SandboxTag {
+  string tag_name = 1;
+  string tag_value = 2;
+}
+
+message SandboxTagsSetRequest {
+  string environment_name = 1;
+  string sandbox_id = 2;
+  repeated SandboxTag tags = 3;
+}
+
+message SandboxTerminateRequest {
+  string sandbox_id = 1;
+}
+
+message SandboxTerminateResponse {
+  GenericResult existing_result = 1;
+}
+
+message SandboxWaitRequest {
+  string sandbox_id = 1;
+  float timeout = 2;
+}
+
+message SandboxWaitResponse {
+  GenericResult result = 1;
+  SandboxHandleMetadata metadata = 2;
+}
+
+message SandboxWaitUntilReadyRequest {
+  string sandbox_id = 1;
+  float timeout = 2;
+}
+
+message SandboxWaitUntilReadyResponse {
+  double ready_at = 1;
+}
+
+message SchedulerPlacement {
+  repeated string regions = 4;
+  optional string _zone = 2 [deprecated = true];
+  optional string _lifecycle = 3 [deprecated = true];
+  repeated string _instance_types = 5 [deprecated = true];
+  bool nonpreemptible = 6;  // Functions only
+
+  reserved 1;
+}
+
+enum SeekWhence {
+  SEEK_SET = 0;
+  SEEK_CUR = 1;
+  SEEK_END = 2;
+}
+
+message SharedVolumeMount {
+  string mount_path = 1;
+  string shared_volume_id = 2;
+  CloudProvider cloud_provider = 3;
+  reserved 4; // allow_cross_region
+}
+
+message StringMap {
+  map<string, string> contents = 1;
+}
+
+enum SystemErrorCode {
+  SYSTEM_ERROR_CODE_UNSPECIFIED = 0;
+  SYSTEM_ERROR_CODE_PERM = 1;           // EPERM: Operation not permitted
+  SYSTEM_ERROR_CODE_NOENT = 2;          // ENOENT: No such file or directory
+  SYSTEM_ERROR_CODE_IO = 5;             // EIO: Input/output error
+  SYSTEM_ERROR_CODE_NXIO = 6;           // ENXIO: No such device or address
+  SYSTEM_ERROR_CODE_NOMEM = 12;         // ENOMEM: Out of memory
+  SYSTEM_ERROR_CODE_ACCES = 13;         // EACCES: Permission denied
+  SYSTEM_ERROR_CODE_EXIST = 17;         // EEXIST: File exists
+  SYSTEM_ERROR_CODE_NOTDIR = 20;        // ENOTDIR: Not a directory
+  SYSTEM_ERROR_CODE_ISDIR = 21;         // EISDIR: Is a directory
+  SYSTEM_ERROR_CODE_INVAL = 22;         // EINVAL: Invalid argument
+  SYSTEM_ERROR_CODE_MFILE = 24;         // EMFILE: Too many open files
+  SYSTEM_ERROR_CODE_FBIG = 27;          // EFBIG: File too large
+  SYSTEM_ERROR_CODE_NOSPC = 28;         // ENOSPC: No space left on device
+}
+
+message SystemErrorMessage {
+  SystemErrorCode error_code = 1;
+  string error_message = 2;
+}
+
+message TaskInfo {
+  string id = 1;
+  double started_at = 2;  // For Function containers, this corresponds to the "ready" time, after startup phase
+  double finished_at = 3;
+  modal.client.GenericResult result = 4;
+  double enqueued_at = 5;
+  string gpu_type = 6;
+  string sandbox_id = 7;
+  TaskSnapshotBehavior snapshot_behavior = 8;
+  GPUConfig gpu_config = 9;
+}
+
+message TaskLogs {
+  string data = 1;
+  TaskState task_state = 6;
+  double timestamp = 7;
+  FileDescriptor file_descriptor = 8;
+  TaskProgress task_progress = 9;
+  string function_call_id = 10;
+  string input_id = 11;
+  uint64 timestamp_ns = 12 [jstype = JS_STRING];
+  string container_id = 13;
+  string container_name = 14;
+}
+
+message TaskLogsBatch {
+  string task_id = 1;
+  repeated TaskLogs items = 2;
+  string entry_id = 5;
+  bool app_done = 10;
+  string function_id = 11;
+  string input_id = 12;
+  string image_id = 13;  // Used for image logs
+  bool eof = 14;
+  string pty_exec_id = 15;  // Used for interactive functions
+  string root_function_id = 16;
+  uint32 ttl_days = 17;
+}
+
+message TaskProgress {
+  uint64 len = 1;
+  uint64 pos = 2;
+  ProgressType progress_type = 3;
+  string description = 4;
+}
+
+enum TaskSnapshotBehavior {
+  TASK_SNAPSHOT_BEHAVIOR_UNSPECIFIED = 0;
+  TASK_SNAPSHOT_BEHAVIOR_SNAPSHOT = 1;
+  TASK_SNAPSHOT_BEHAVIOR_RESTORE = 2;
+  TASK_SNAPSHOT_BEHAVIOR_NONE = 3;
+}
+
+enum TaskState {
+  TASK_STATE_UNSPECIFIED = 0;
+  TASK_STATE_CREATED = 6;
+  TASK_STATE_QUEUED = 1;
+  TASK_STATE_WORKER_ASSIGNED = 2;
+  TASK_STATE_LOADING_IMAGE = 3;
+  TASK_STATE_ACTIVE = 4;
+  TASK_STATE_COMPLETED = 5;
+  TASK_STATE_CREATING_CONTAINER = 7;
+  TASK_STATE_IDLE = 8;
+  TASK_STATE_PREEMPTIBLE = 9;
+  TASK_STATE_PREEMPTED = 10;
+  TASK_STATE_LOADING_CHECKPOINT_IMAGE = 11;
+}
+
+message TunnelData {
+  string host = 1;
+  uint32 port = 2;
+  optional string unencrypted_host = 3;
+  optional uint32 unencrypted_port = 4;
+  uint32 container_port = 5;
+}
+
+enum TunnelType {
+  TUNNEL_TYPE_UNSPECIFIED = 0;
+  TUNNEL_TYPE_H2 = 1; // HTTP/2 tunnel
+}
+
+message VolumeCreateOptions {
+  map<string, string> experimental_options = 1;
+}
+
+message VolumeDeleteRequest {
+  string volume_id = 1;
+  string environment_name = 2 [deprecated=true];
+}
+
+enum VolumeFsVersion {
+  VOLUME_FS_VERSION_UNSPECIFIED = 0;
+  VOLUME_FS_VERSION_V1 = 1;
+  VOLUME_FS_VERSION_V2 = 2;
+}
+
+message VolumeGetOrCreateRequest {
+  string deployment_name = 1;
+  reserved 2; // removed namespace
+  string environment_name = 3;
+  ObjectCreationType object_creation_type = 4;
+  string app_id = 5;  // only used with OBJECT_CREATION_TYPE_ANONYMOUS_OWNED_BY_APP
+  VolumeFsVersion version = 6;
+  optional VolumeCreateOptions create_options = 7;
+}
+
+message VolumeGetOrCreateResponse {
+  string volume_id = 1;
+  VolumeFsVersion version = 2;  // Not used directly; version is part of the metadata
+  VolumeMetadata metadata = 3;
+}
+
+message VolumeMetadata {
+  VolumeFsVersion version = 1;
+  string name = 2;
+  CreationInfo creation_info = 3;
+}
+
+message VolumeMount {
+  string volume_id = 1;
+  string mount_path = 2;
+  bool allow_background_commits = 3;
+  bool read_only = 4;
+  optional string sub_path = 5;
+}
+
+service ModalClient {
+  rpc AppGetOrCreate(AppGetOrCreateRequest) returns (AppGetOrCreateResponse);
+  rpc AppStop(AppStopRequest) returns (google.protobuf.Empty);
+  rpc ImageGetOrCreate(ImageGetOrCreateRequest) returns (ImageGetOrCreateResponse);
+  rpc ImageJoinStreaming(ImageJoinStreamingRequest) returns (stream ImageJoinStreamingResponse);
+  rpc VolumeGetOrCreate(VolumeGetOrCreateRequest) returns (VolumeGetOrCreateResponse);
+  rpc VolumeDelete(VolumeDeleteRequest) returns (google.protobuf.Empty);
+  rpc SandboxCreate(SandboxCreateRequest) returns (SandboxCreateResponse);
+  rpc SandboxWait(SandboxWaitRequest) returns (SandboxWaitResponse);
+  rpc SandboxWaitUntilReady(SandboxWaitUntilReadyRequest) returns (SandboxWaitUntilReadyResponse);
+  rpc SandboxTerminate(SandboxTerminateRequest) returns (SandboxTerminateResponse);
+  rpc SandboxGetTaskId(SandboxGetTaskIdRequest) returns (SandboxGetTaskIdResponse);
+  rpc SandboxList(SandboxListRequest) returns (SandboxListResponse);
+  rpc SandboxTagsSet(SandboxTagsSetRequest) returns (google.protobuf.Empty);
+  rpc SandboxGetTunnels(SandboxGetTunnelsRequest) returns (SandboxGetTunnelsResponse);
+  rpc SandboxCreateConnectToken(SandboxCreateConnectTokenRequest) returns (SandboxCreateConnectTokenResponse);
+  rpc SandboxSnapshotFs(SandboxSnapshotFsRequest) returns (SandboxSnapshotFsResponse);
+  rpc SandboxRestore(SandboxRestoreRequest) returns (SandboxRestoreResponse);
+  rpc SandboxGetLogs(SandboxGetLogsRequest) returns (stream TaskLogsBatch);
+  rpc ContainerExec(ContainerExecRequest) returns (ContainerExecResponse);
+  rpc ContainerExecGetOutput(ContainerExecGetOutputRequest) returns (stream RuntimeOutputBatch);
+  rpc ContainerExecWait(ContainerExecWaitRequest) returns (ContainerExecWaitResponse);
+  rpc ContainerFilesystemExec(ContainerFilesystemExecRequest) returns (ContainerFilesystemExecResponse);
+  rpc ContainerFilesystemExecGetOutput(ContainerFilesystemExecGetOutputRequest) returns (stream FilesystemRuntimeOutputBatch);
+}

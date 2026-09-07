@@ -27,7 +27,7 @@ import { WebSocket } from "ws";
 const USER_ID_NOT_SET_ERR_CODE: number = 10;
 const USER_ID_NOT_SET_ERR_MSG: string = "not authenticated, userId is not set";
 
-// The six VM runtimes a Caspar node ships with. `vm.init` scaffolds a
+// The seven VM runtimes a Caspar node ships with. `vm.init` scaffolds a
 // deployable project for any of these keys.
 const VM_RUNTIMES = [
   "wasm",
@@ -36,6 +36,7 @@ const VM_RUNTIMES = [
   "fire",
   "elpian",
   "elpify",
+  "modal",
 ] as const;
 type VmRuntime = (typeof VM_RUNTIMES)[number];
 
@@ -784,6 +785,26 @@ class Caspar {
         entityId: "main",
       });
     },
+    // Permanently destroy one VM instance of a program entity. Unlike
+    // stopMachine (which suspends and can be resumed), this removes the
+    // instance and everything it owns — only the program's owner may call it.
+    deleteVm: async (
+      machineId: string,
+      vmId: string,
+      entityId: string = "main"
+    ): Promise<{ resCode: number; obj: any }> => {
+      if (!this.userId) {
+        return {
+          resCode: USER_ID_NOT_SET_ERR_CODE,
+          obj: { message: USER_ID_NOT_SET_ERR_MSG },
+        };
+      }
+      return await this.sendRequest(this.userId, "/programs/deleteEntity", {
+        programId: machineId,
+        entityId,
+        vmId,
+      });
+    },
     listApps: async (
       offset: number,
       count: number
@@ -965,6 +986,29 @@ CMD ["python3", "-m", "http.server", "8080"]
 `,
           "index.html": `<!doctype html><title>Caspar docker entity</title>
 <h1>Hello from a Caspar docker VM</h1>
+`,
+        },
+      };
+    case "modal":
+      return {
+        entityFile: "Modalfile",
+        deployRuntime: "modal",
+        deployNote:
+          'Modal cloud sandbox entity. The Modalfile is a Dockerfile-style recipe layered on a registry base image; the node needs MODAL_API_KEY configured.',
+        buildScript: `#!/usr/bin/env bash
+# The Modalfile IS the payload; the node resolves it into a Modal image.
+set -e
+cp ../src/Modalfile ./bytecode
+`,
+        files: {
+          Modalfile: `# Caspar Modal entity — runs as a Modal cloud sandbox.
+# The FROM line names the registry base image; everything after it is layered
+# on top by Modal's builder.
+FROM ubuntu:24.04
+RUN apt-get update && apt-get install -y --no-install-recommends python3 \\
+  && rm -rf /var/lib/apt/lists/*
+EXPOSE 8080
+CMD ["python3", "-m", "http.server", "8080"]
 `,
         },
       };

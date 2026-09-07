@@ -175,3 +175,10 @@ pub fn terminate_on(runtime: &str, packet: &Value) -> Result<Value, String> {
         .ok_or_else(|| format!("runtime '{}' is not registered", runtime))?
         .terminate_vm(packet)
 }
+
+/// Cross-plugin delegation for delete.
+pub fn delete_on(runtime: &str, packet: &Value) -> Result<Value, String> {
+    get(runtime)
+        .ok_or_else(|| format!("runtime '{}' is not registered", runtime))?
+        .delete_vm(packet)
+}

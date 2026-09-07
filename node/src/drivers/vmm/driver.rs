@@ -757,6 +757,24 @@ impl IVmm for Vmm {
             .plan_stop_entity(ctx)
     }
 
+    fn plan_delete_entity(&self, runtime: &str, ctx: &Value) -> Result<Value, String> {
+        caspar_vm_sdk::registry::get(runtime)
+            .ok_or_else(|| format!("unsupported runtime: {}", runtime))?
+            .plan_delete_entity(ctx)
+    }
+
+    fn delete_vm_instance(&self, input: &Value) -> Value {
+        let mut packet = input.clone();
+        if let Some(obj) = packet.as_object_mut() {
+            obj.insert("type".to_string(), Value::String("deleteVm".to_string()));
+            obj.insert("purge".to_string(), Value::Bool(true));
+            obj.insert("delete".to_string(), Value::Bool(true));
+        }
+        let raw = dispatch_packet(&packet);
+        serde_json::from_str::<Value>(&raw)
+            .unwrap_or_else(|_| json!({"ok": false, "error": raw}))
+    }
+
     fn forward_http(&self, request: &Value) -> Value {
         let program_id = request["programId"].as_str().unwrap_or("");
         let entity_id = request["entityId"].as_str().unwrap_or("");

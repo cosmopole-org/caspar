@@ -23,6 +23,7 @@ pub fn route_vm_packet(packet: &JsonValue) -> String {
         match env.packet_type {
             VmPacketKind::RunVm => dispatch_run_vm_packet(&owned, &env),
             VmPacketKind::TerminateVm => dispatch_terminate_vm_packet(&owned, &env),
+            VmPacketKind::DeleteVm => dispatch_delete_vm_packet(&owned, &env),
             VmPacketKind::ExecVm => dispatch_exec_packet(&owned, |p, pkt| p.exec_vm(pkt)),
             VmPacketKind::CopyToVm => dispatch_exec_packet(&owned, |p, pkt| p.copy_to_vm(pkt)),
             VmPacketKind::BuildVmImage => {
@@ -126,6 +127,44 @@ fn dispatch_terminate_vm_packet(packet: &JsonValue, env: &VmPacketContext) -> St
         }
     }
     json!({"ok": true, "machineId": env.machine_id, "results": results}).to_string()
+}
+
+/// Permanently destroy one VM instance.
+///
+/// Unlike terminate, a delete never fans out across runtimes when the packet
+/// names none: destroying every in-process instance of a machine because the
+/// caller forgot a `runtime` field would delete VMs nobody asked about. An
+/// unresolvable runtime is an error here, not a broadcast.
+fn dispatch_delete_vm_packet(packet: &JsonValue, env: &VmPacketContext) -> String {
+    let plugin = match vm_registry::get(&env.runtime) {
+        Some(p) => p,
+        None => {
+            let ast_path = packet["astPath"].as_str().unwrap_or("");
+            match vm_registry::resolve_for_packet(packet, ast_path) {
+                Some(p) => p,
+                None => {
+                    return json!({
+                        "ok": false,
+                        "error": "deleteVm requires a resolvable runtime",
+                    })
+                    .to_string()
+                }
+            }
+        }
+    };
+    match plugin.delete_vm(packet) {
+        Ok(res) => res.to_string(),
+        Err(err) => {
+            log(format!(
+                "delete_vm({}) failed: machine={} vm={} err={}",
+                plugin.meta().key,
+                env.machine_id,
+                env.vm_id,
+                err
+            ));
+            json!({"ok": false, "error": err}).to_string()
+        }
+    }
 }
 
 fn dispatch_exec_packet<F>(packet: &JsonValue, op: F) -> String

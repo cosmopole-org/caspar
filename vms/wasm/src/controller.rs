@@ -207,6 +207,43 @@ impl VmPlugin for WasmVmController {
         Ok(json!({"ok": true, "runtime": "wasm", "machineId": machine_id}))
     }
 
+    /// Permanently destroy a wasm VM.
+    ///
+    /// A wasm "VM" is a module instance the node keeps warm, so deleting it
+    /// means terminating the instance, closing its lifecycle transaction (a
+    /// half-open write buffer would otherwise outlive the VM it belonged to),
+    /// and dropping the execution-context entry. With `removeArtifact` the
+    /// module's cached AOT shared object goes too, so a later deploy of the
+    /// same path recompiles rather than loading the deleted VM's code.
+    fn delete_vm(&self, packet: &JsonValue) -> Result<JsonValue, String> {
+        let machine_id = packet["machineId"].as_str().unwrap_or("");
+        if machine_id.is_empty() {
+            return Err("machineId is required".to_string());
+        }
+        let vm_id = packet["vmId"].as_str().unwrap_or("main");
+        terminate_managed_vm(machine_id);
+        if let Some(h) = host() {
+            h.end_vm_json_trx(vm_id);
+            h.commit_vm_buffer(vm_id);
+            h.unregister_vm_context(vm_id);
+        }
+        let mut artifact_removed = false;
+        if packet["removeArtifact"].as_bool().unwrap_or(false) {
+            let ast_path = packet["astPath"].as_str().unwrap_or("").trim();
+            if !ast_path.is_empty() {
+                artifact_removed = std::fs::remove_file(format!("{}.so", ast_path)).is_ok();
+            }
+        }
+        Ok(json!({
+            "ok": true,
+            "runtime": "wasm",
+            "machineId": machine_id,
+            "vmId": vm_id,
+            "deleted": true,
+            "artifactRemoved": artifact_removed,
+        }))
+    }
+
     fn exec_vm(&self, packet: &JsonValue) -> Result<JsonValue, String> {
         let ast_path = packet["astPath"].as_str().unwrap_or("").to_string();
         if ast_path.is_empty() {
