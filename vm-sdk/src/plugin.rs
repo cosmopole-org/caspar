@@ -89,6 +89,25 @@ pub trait VmPlugin: Send + Sync {
         ))
     }
 
+    /// The public endpoints a running VM is reachable on, if any.
+    ///
+    /// Runtimes that publish a VM's ports somewhere reachable — a cloud
+    /// sandbox's tunnels, say — answer with them here, so a creature can hand
+    /// a person a URL for the thing running inside its own VM (a desktop, a
+    /// preview server) without the node inventing a scheme for it. Runtimes
+    /// with nothing public return an empty list rather than an error: having
+    /// no public endpoint is an ordinary state, not a failure.
+    ///
+    /// Returns `{ ok, endpoints: [{ containerPort, url, host, port }] }`.
+    fn vm_endpoints(&self, packet: &Value) -> Result<Value, String> {
+        let _ = packet;
+        Ok(json!({
+            "ok": true,
+            "runtime": self.meta().key,
+            "endpoints": [],
+        }))
+    }
+
     /// Build the deployable image/module for an entity of this runtime.
     fn build_image(&self, packet: &Value) -> Result<Value, String> {
         let _ = packet;

@@ -177,7 +177,9 @@ the Volume and drops every link, leaving nothing to resume from. `exec_vm` runs
 a command through `ContainerExec` and collects both streams; `copy_to_vm` /
 `copy_from_vm` use Modal's container filesystem API; `forward_http` proxies to
 the sandbox's Modal **tunnel** (falling back to the generic signal path when
-the sandbox exposes none).
+the sandbox exposes none), and `vm_endpoints` reports those tunnels, so a
+creature can hand a member the public address of something running inside the
+project's own machine.
 
 **Implement/extend:** cloud-backed runtimes should keep their instance mapping
 in node state rather than memory, override `restore` to adopt live instances,

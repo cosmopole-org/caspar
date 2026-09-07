@@ -91,6 +91,10 @@ a sensible default.
 **Core lifecycle (default = "unsupported"/no-op):**
 
 - `exec_vm`, `copy_to_vm`, `copy_from_vm`, `build_image`.
+- `vm_endpoints` — the public URLs a running VM is reachable on. A runtime that
+  publishes a VM's ports somewhere reachable (a cloud sandbox's tunnels)
+  answers here; one with nothing public returns an empty list, because having
+  no public endpoint is an ordinary state and not a failure.
 - `delete_vm` — **permanently** destroy a VM and everything it owns. Terminate
   suspends: the instance can be resumed and its persistent volume survives, so
   a runtime that only implements terminate can never actually free anything.

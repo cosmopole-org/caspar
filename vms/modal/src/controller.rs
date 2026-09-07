@@ -1224,6 +1224,52 @@ impl VmPlugin for ModalVmPlugin {
         self.forward_http_inner(packet)
     }
 
+    /// A modal sandbox's Modal-hosted tunnels — the public URL each exposed
+    /// port is reachable on. This is what lets a creature hand a member the
+    /// address of something running inside the project's own machine.
+    fn vm_endpoints(&self, packet: &JsonValue) -> Result<JsonValue, String> {
+        let identity = ModalIdentity::from_packet(packet);
+        let sandbox_id = state_get(&sandbox_link_key(&identity.vm_id));
+        if sandbox_id.is_empty() {
+            return Ok(json!({"ok": true, "runtime": "modal", "endpoints": []}));
+        }
+        let mut conn = self.conn()?;
+        let tunnels = block_on(conn.stub.sandbox_get_tunnels(proto::SandboxGetTunnelsRequest {
+            sandbox_id: sandbox_id.clone(),
+            timeout: packet["timeout"].as_f64().unwrap_or(30.0) as f32,
+        }))?
+        .map_err(|e| format!("modal SandboxGetTunnels failed: {}", e))?
+        .into_inner();
+
+        let endpoints: Vec<JsonValue> = tunnels
+            .tunnels
+            .iter()
+            .map(|t| {
+                json!({
+                    "containerPort": t.container_port,
+                    "host": t.host,
+                    "port": t.port,
+                    // Modal terminates TLS on the tunnel, so the public form is
+                    // always https — the port is only in the URL when it is not
+                    // the default, which is what a browser will accept.
+                    "url": if t.port == 443 {
+                        format!("https://{}", t.host)
+                    } else {
+                        format!("https://{}:{}", t.host, t.port)
+                    },
+                })
+            })
+            .collect();
+
+        Ok(json!({
+            "ok": true,
+            "runtime": "modal",
+            "vmId": identity.vm_id,
+            "sandboxId": sandbox_id,
+            "endpoints": endpoints,
+        }))
+    }
+
     /// Build the sandbox's image from a deployed `Modalfile` without starting
     /// anything, so a deploy can fail on a bad recipe rather than at the first
     /// run.

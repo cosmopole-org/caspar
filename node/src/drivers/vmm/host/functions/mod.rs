@@ -21,6 +21,7 @@ pub mod terminate_vm;
 pub mod transfer;
 pub mod validate_sign;
 pub mod verify_program;
+pub mod vm_endpoints;
 pub mod vm_log;
 pub mod vm_ownership;
 
@@ -47,5 +48,6 @@ pub use terminate_vm::*;
 pub use transfer::*;
 pub use validate_sign::*;
 pub use verify_program::*;
+pub use vm_endpoints::*;
 pub use vm_log::*;
 pub use vm_ownership::*;

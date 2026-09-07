@@ -337,6 +337,7 @@ pub(crate) fn handle_unified_host_call(packet: &JsonValue) -> String {
         "runVm" => host_fn_run_vm(&ctx.program_id, &input),
         "terminateVm" => host_fn_terminate_vm(&input),
         "deleteVm" | "destroyVm" => host_fn_delete_vm(&ctx.program_id, &input),
+        "vmEndpoints" => host_fn_vm_endpoints(&ctx.program_id, &input),
         // The gateway subscription channel: a creature mints bearer tokens for
         // programs it runs outside Caspar, and pushes updates to the ones
         // holding a socket open. The owning creature is the resolved caller,
