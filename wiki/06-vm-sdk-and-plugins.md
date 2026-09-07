@@ -91,8 +91,15 @@ a sensible default.
 **Core lifecycle (default = "unsupported"/no-op):**
 
 - `exec_vm`, `copy_to_vm`, `copy_from_vm`, `build_image`.
+- `delete_vm` — **permanently** destroy a VM and everything it owns. Terminate
+  suspends: the instance can be resumed and its persistent volume survives, so
+  a runtime that only implements terminate can never actually free anything.
+  The default is a terminate carrying `purge`/`delete`, which the runtimes that
+  distinguish the two honour by removing rather than stopping; a runtime with
+  resources a purge does not reach (a cloud sandbox, a remote volume, a built
+  image) overrides it.
 - Aliased verbs `create` / `start` / `resume` → `run_vm`; `stop` / `pause` →
-  `terminate_vm`.
+  `terminate_vm`; `destroy` → `delete_vm`.
 - `init(&self)` — one-time hook after registration.
 
 **Snapshot restore:**
@@ -115,7 +122,13 @@ own transaction:
 - `plan_run_entity(ctx)` → `{ input, links }` for a standalone `runVm`.
 - `plan_stop_entity(ctx)` → `{ input, links }` for a `terminateVm`, where each
   link asks the caller to read a state key into an input field.
+- `plan_delete_entity(ctx)` → `{ input, links }` for a `deleteVm`, same shape
+  as the stop plan (the default derives it from that plan, so a runtime that
+  overrode only `plan_stop_entity` still deletes correctly).
 - `build_terminate_request(input)` → the typed terminate packet.
+- `build_delete_request(input)` → the typed delete packet. Unlike terminate it
+  always names one concrete instance: deleting "whatever this machine is
+  running" would destroy VMs the caller never named.
 
 **Inbound HTTP forwarding:**
 

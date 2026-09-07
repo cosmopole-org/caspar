@@ -4,7 +4,7 @@
 action protocol** (the "Caspar shell API"). Every command maps directly to a
 node shell action route (`/creatures/*`, `/programs/*`) — there is no hosted
 backend, billing, or miniapp layer involved. It also scaffolds deployable VM
-projects for all six runtimes. Each command is documented in its own section.
+projects for all seven runtimes. Each command is documented in its own section.
 
 ---
 
@@ -132,7 +132,7 @@ are `/programs/*` (and `/creatures/create` for the owning machine).
 
 ### programs.create
 `programs.create [username] [creatureId] [path] [runtime] [comment]` — create a
-program under a creature, targeting one of the six runtimes.
+program under a creature, targeting one of the seven runtimes.
 Example: `programs.create calculator 984@global /api/sum wasm "sum machine"`.
 
 ### programs.delete
@@ -178,8 +178,8 @@ These commands are **offline** (no node needed) and scaffold projects that the
 `programs.deploy` convention can build and ship.
 
 ### vm.types
-`vm.types` — list the six VM runtimes a Caspar node supports: `wasm`,
-`javascript`, `docker`, `fire`, `elpian`, `elpify`.
+`vm.types` — list the seven VM runtimes a Caspar node supports: `wasm`,
+`javascript`, `docker`, `fire`, `elpian`, `elpify`, `modal`.
 
 ### vm.init
 `vm.init [runtime] [path] [optional entityId]` — scaffold a deployable VM

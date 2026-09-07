@@ -20,4 +20,5 @@ caspar-vm-elpian = { path = "../../../vms/elpian" }
 caspar-vm-elpify = { path = "../../../vms/elpify" }
 caspar-vm-fire = { path = "../../../vms/fire" }
 caspar-vm-javascript = { path = "../../../vms/javascript" }
+caspar-vm-modal = { path = "../../../vms/modal" }
 caspar-vm-wasm = { path = "../../../vms/wasm" }

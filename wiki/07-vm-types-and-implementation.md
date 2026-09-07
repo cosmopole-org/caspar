@@ -1,6 +1,6 @@
 # 07 — VM Types & Implementation
 
-Caspar ships six VM runtime plugins under `vms/`. This page describes each one
+Caspar ships seven VM runtime plugins under `vms/`. This page describes each one
 in its own section — what it is, its `vm.config.json`, the run-packet fields it
 reads, how it talks to the host, and how to implement/extend it — followed by a
 general recipe for adding a brand-new VM type.
@@ -129,6 +129,63 @@ by `machine_id`/`vm_id`, stream I/O through host logging, and set
 
 ---
 
+## `modal` — Modal Cloud Sandboxes
+
+**What it is:** runs program entities as **Modal sandboxes** — containers in
+Modal's cloud rather than on this machine — each with a persistent Modal
+Volume mounted at `/data`. Not in-process (`inProcess: false`).
+
+**Config highlights:** `key: modal`, `aliases: ["modalsandbox",
+"modal-sandbox"]`, `entityFileName: Modalfile`, `acceptsExtraFiles: true`,
+`restorable: true`, `execFallback: false`.
+
+**Credentials:** the pair Modal issues under Settings → API Tokens, given as
+`MODAL_API_KEY` (`"<token-id>:<token-secret>"`) or as `MODAL_TOKEN_ID` +
+`MODAL_TOKEN_SECRET`. `MODAL_ENVIRONMENT`, `MODAL_SERVER_URL`,
+`MODAL_APP_PREFIX`, `MODAL_DEFAULT_IMAGE`, `MODAL_VOLUME_MOUNT_PATH` and
+`MODAL_SANDBOX_TIMEOUT_SECS` tune the rest (see `node/sample.env`). With no
+credentials the plugin still registers and every modal operation fails with
+"modal runtime is not configured" — a clear message rather than a transport
+error.
+
+**How it talks to Modal:** Modal publishes no Rust SDK, so the plugin speaks
+Modal's gRPC control plane directly, against a **vendored slice** of Modal's
+`api.proto` (`vms/modal/proto/modal.proto`) carrying only the messages and RPCs
+this runtime calls, with upstream field numbers preserved. Regenerate it with
+`scripts/slice_modal_proto.py` when an upstream change breaks a call — Modal
+gives no compatibility guarantee for direct gRPC use. `protox` compiles the
+proto in pure Rust, so no `protoc` binary is needed on a build machine.
+
+**Where its state lives:** a Modal sandbox outlives the node process that
+started it, so this runtime keeps **no in-process registry**. The vm id →
+sandbox id mapping is written to node state (`ModalSandbox::<vmId>`, plus
+`ModalVolume::`, `ModalApp::`, `ModalImage::`) at create and read back by every
+later operation. That is also what makes restore correct: `restore` re-attaches
+to a sandbox that is still running rather than launching a second one and
+billing for both.
+
+**Run-packet fields:** `image` (registry tag), `dockerfileCommands` (layered on
+top of it — what a deployed `Modalfile` becomes), `entrypoint`/`command`, `env`,
+`workdir`, `ports`, `persistent` (default true — the Volume), `forceRestart`,
+`idleTimeoutSecs`, `blockNetwork`, `timeoutSecs`.
+
+**Lifecycle:** `run_vm` resolves the app, image and volume then creates the
+sandbox (re-attaching to a running one unless `forceRestart`); `terminate_vm`
+ends the container but **keeps the Volume**, so a later run mounts the same
+`/data` and the VM continues where it left off; `delete_vm` terminates, deletes
+the Volume and drops every link, leaving nothing to resume from. `exec_vm` runs
+a command through `ContainerExec` and collects both streams; `copy_to_vm` /
+`copy_from_vm` use Modal's container filesystem API; `forward_http` proxies to
+the sandbox's Modal **tunnel** (falling back to the generic signal path when
+the sandbox exposes none).
+
+**Implement/extend:** cloud-backed runtimes should keep their instance mapping
+in node state rather than memory, override `restore` to adopt live instances,
+and set `execFallback: false` so legacy container-ABI packets keep going to the
+local container runtime.
+
+---
+
 ## `elpian` — Elpian AST VM
 
 **What it is:** executes **Elpian AST programs** in-process with host-call
@@ -182,7 +239,7 @@ proving cost — proving is `O(n log² n)`, verification `O(log² n)`.
 
 ---
 
-## Recipe: implement a new Caspar-based VM (any of the six styles)
+## Recipe: implement a new Caspar-based VM (any of the seven styles)
 
 1. **Scaffold:** `casparctl vms new <key>` creates
    `vms/<key>/{Cargo.toml,vm.config.json,src/lib.rs,src/controller.rs}`.

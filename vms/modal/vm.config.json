@@ -1,0 +1,17 @@
+{
+  "key": "modal",
+  "name": "Modal Sandboxes",
+  "version": "0.1.0",
+  "description": "Runs program entities as Modal cloud sandboxes: one sandbox per VM instance with a persistent Modal Volume mounted at /data, exec and file transfer through the container filesystem API, and inbound HTTP proxied to the sandbox's tunnel.",
+  "aliases": ["modalsandbox", "modal-sandbox"],
+  "artifactExtensions": [],
+  "inProcess": false,
+  "defaultRuntime": false,
+  "entityFileName": "Modalfile",
+  "acceptsExtraFiles": true,
+  "buildOnDeploy": false,
+  "setEntityLinksOnDeploy": false,
+  "supportsChainTrxs": false,
+  "restorable": true,
+  "execFallback": false
+}

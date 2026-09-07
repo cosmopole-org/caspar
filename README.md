@@ -10,8 +10,8 @@ multi-runtime virtual-machine execution engine under a single **creature**
 programming model. Nodes expose a signed binary action protocol over
 mutual-TLS TCP/WebSocket transports, execute user-defined WebAssembly
 creatures, replicate state through an embedded Babble hashgraph chain, and can
-spawn subordinate VMs in any of **six runtimes**: `wasm`, `docker`, `elpify`,
-`elpian`, `javascript`, and `firecracker`.
+spawn subordinate VMs in any of **seven runtimes**: `wasm`, `docker`, `elpify`,
+`elpian`, `javascript`, `firecracker`, and `modal` (cloud sandboxes).
 
 The entire node, the local crates, and the `casparctl` operator CLI are
 written in **Rust** (the previous Go implementation is retained only under
@@ -26,7 +26,7 @@ written in **Rust** (the previous Go implementation is retained only under
   modules (WasmEdge) with a per-creature RocksDB key-value namespace and a
   signal bus.
 - **Unified multi-runtime VM router** — `build`/`run`/`exec`/`copy`/`terminate`
-  operations dispatch to six runtimes through one runtime-agnostic code path.
+  operations dispatch to seven runtimes through one runtime-agnostic code path.
 - **Per-VM persistent transaction** — all key-value mutations within a single
   creature signal commit atomically as one RocksDB write (no intra-signal write
   amplification, no partially-visible state).
@@ -78,10 +78,10 @@ Single shard = three local nodes (8074 / 8174 / 8274) sharing one Babble group.
 - `cmd/casparctl/` — operator CLI (**Rust**): install / control / telemetry TUI
   / VM plugin selection (`casparctl vms …`)
 - `client-cli/` — Caspar client CLI (**TypeScript**, `caspar-client`): shell-API
-  client for creatures/programs + VM project template scaffolding for all six
+  client for creatures/programs + VM project template scaffolding for all seven
   runtimes (see [`client-cli/README.md`](client-cli/README.md))
 - `wiki/` — full project wiki: overview, architecture, protocol, casparctl, VM
-  SDK/plugins, the six VM types, consensus/federation/cluster, and the client
+  SDK/plugins, the seven VM types, consensus/federation/cluster, and the client
   CLI (see [`wiki/README.md`](wiki/README.md))
 - `sdk/` — Python client (`caspar_client.py`) + sample creatures
 - `reports/` — benchmark run artifacts (`reports/final/` is current)
