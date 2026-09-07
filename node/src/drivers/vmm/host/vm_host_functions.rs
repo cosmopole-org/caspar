@@ -233,13 +233,48 @@ pub(crate) fn perform_http_request(input: &JsonValue) -> Result<String, String> 
         request = request.body(input["body"].to_string());
     }
 
+    // Callers that need more than the body ask for the full response. Without
+    // it a creature cannot tell a 401 from a 200, cannot read a session id a
+    // server returns in a header (MCP's `Mcp-Session-Id`, say), and cannot see
+    // a rate-limit header — it only ever sees bytes. The bare base64 body
+    // stays the default so every existing caller is unaffected.
+    let want_full = input["withResponse"].as_bool().unwrap_or(false)
+        || input["includeHeaders"].as_bool().unwrap_or(false);
+
     let response = request
         .send()
         .map_err(|e| format!("http request failed: {}", e))?;
+
+    if !want_full {
+        let bytes = response
+            .bytes()
+            .map_err(|e| format!("failed to read response body: {}", e))?;
+        return Ok(BASE64_STANDARD.encode(bytes));
+    }
+
+    let status = response.status().as_u16();
+    let mut headers = serde_json::Map::new();
+    for (name, value) in response.headers().iter() {
+        if let Ok(value) = value.to_str() {
+            // Lowercased, because HTTP header names are case-insensitive and a
+            // creature comparing them as JSON keys has no way to know that.
+            headers.insert(name.as_str().to_ascii_lowercase(), json!(value));
+        }
+    }
     let bytes = response
         .bytes()
         .map_err(|e| format!("failed to read response body: {}", e))?;
-    Ok(BASE64_STANDARD.encode(bytes))
+    let body_base64 = BASE64_STANDARD.encode(&bytes);
+    Ok(json!({
+        "ok": (200..400).contains(&status),
+        "status": status,
+        "headers": JsonValue::Object(headers),
+        "bodyBase64": body_base64,
+        // Decoded too when the body is text, which is what an API returns and
+        // what every caller then has to decode by hand otherwise.
+        "body": String::from_utf8(bytes.to_vec()).unwrap_or_default(),
+    })
+    .to_string())
 }
 
 pub(crate) fn handle_unified_host_call(packet: &JsonValue) -> String {

@@ -256,7 +256,7 @@ The host recognises these operations (from `vms/wasm/src/host_calls.rs`):
 | `runVm` / `terminateVm` / `execVm` / `copyToVm` / `buildVmImage` | Orchestrate subordinate VMs (any runtime) via the VM packet router. |
 | `deleteVm` | **Permanently** destroy a VM this creature launched. `runVm` records the launching program; a delete is allowed for that program or a sibling creature of the same owner (a deployment is many programs — the action that creates a resource is never the one that deletes it), and refused for anyone else. A VM with no recorded owner is refused rather than allowed. |
 | `registerBridgeToken` / `revokeBridgeToken` / `publishUpdate` | The [gateway subscription channel](#the-gateway-subscription-channel-gateway): mint bearer tokens for a program running outside Caspar, and push updates to the ones holding a socket open. |
-| `httpPost` / `httpRequest` | Perform an outbound HTTP request on behalf of the VM. |
+| `httpPost` / `httpRequest` | Perform an outbound HTTP request on behalf of the VM. Returns the base64-encoded body; pass `withResponse: true` to get `{ok, status, headers, body, bodyBase64}` instead — needed whenever a creature must tell a 401 from a 200 or read a header the server returns (an MCP session id, a rate-limit hint). Header names come back lowercased. |
 | `verifyProgramExecution` (`elpifyProof`) | Verify a program-execution proof via the provable runtime plugin. |
 | *anything else* | Forwarded to the unified host-call dispatcher (`signalUser`, `signalGroup`, …), with `programId`/`machineId` injected. |
 
