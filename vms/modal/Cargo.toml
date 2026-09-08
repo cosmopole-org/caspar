@@ -11,6 +11,7 @@ path = "src/lib.rs"
 [dependencies]
 caspar-vm-sdk = { path = "../../vm-sdk" }
 base64 = "0.22"
+chrono = "0.4"
 futures-util = "0.3"
 prost = "0.13"
 prost-types = "0.13"

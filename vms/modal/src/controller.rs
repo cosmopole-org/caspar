@@ -62,6 +62,7 @@ fn volume_mount_path() -> String {
         .unwrap_or_else(|| "/data".to_string())
 }
 
+#[derive(Clone)]
 pub struct ModalVmPlugin {
     meta: VmPluginMeta,
 }
@@ -103,6 +104,23 @@ fn state_del(keys: &[String]) {
             .collect();
         let _ = h.state_apply_ops(&ops);
     }
+}
+
+fn provisioning_key(vm_id: &str) -> String {
+    format!("ModalProvisioning::{}", vm_id)
+}
+
+fn provisioning_error_key(vm_id: &str) -> String {
+    format!("ModalProvisioningError::{}", vm_id)
+}
+
+fn fresh_provisioning_marker(vm_id: &str) -> Option<String> {
+    let marker = state_get(&provisioning_key(vm_id));
+    let started_at = marker
+        .split_once(':')
+        .and_then(|(raw, _)| raw.parse::<i64>().ok())?;
+    let now = chrono::Utc::now().timestamp_millis();
+    ((0..20 * 60 * 1000).contains(&(now - started_at))).then_some(marker)
 }
 
 // ── Packet helpers ────────────────────────────────────────────────────────
@@ -514,10 +532,13 @@ impl ModalVmPlugin {
     fn is_running(&self, conn: &mut ModalConn, sandbox_id: &str) -> Result<bool, String> {
         let request = proto::SandboxGetTaskIdRequest {
             sandbox_id: sandbox_id.to_string(),
-            // Poll, do not block: this is a "should I reuse this?" question
-            // asked on the way into `run_vm`, not a wait for readiness.
-            timeout: Some(0.0),
-            wait_until_ready: false,
+            // `wait_until_ready: false` can return a stale `task_result: None`
+            // for several seconds after Modal has idle-timed the task. Asking
+            // for readiness makes the same API return the terminal
+            // IdleTimeout result immediately; a live task is already ready by
+            // the time its sandbox link is recorded.
+            timeout: Some(5.0),
+            wait_until_ready: true,
         };
         let response = block_on(conn.stub.sandbox_get_task_id(request))?
             .map_err(|e| format!("modal SandboxGetTaskId failed: {}", e))?
@@ -562,7 +583,6 @@ impl ModalVmPlugin {
         if identity.machine_id.is_empty() {
             return Err("machineId is required".to_string());
         }
-        let mut conn = self.conn()?;
 
         // Sandbox semantics, parallel to docker and fire:
         //   - `persistent: true` (the default) gives the VM its own Modal
@@ -571,11 +591,25 @@ impl ModalVmPlugin {
         //     still running is re-attached rather than replaced.
         let persistent = packet["persistent"].as_bool().unwrap_or(true);
         let force_restart = packet["forceRestart"].as_bool().unwrap_or(false);
+        let async_provision = packet["asyncProvision"].as_bool().unwrap_or(false);
+        // The detached worker re-enters this function to run the synchronous
+        // implementation. It must not mistake its own marker for a duplicate.
+        let async_worker = packet["asyncProvisionWorker"].as_bool().unwrap_or(false);
+        let pending = if async_worker {
+            None
+        } else {
+            fresh_provisioning_marker(&identity.vm_id)
+        };
 
         let existing = state_get(&sandbox_link_key(&identity.vm_id));
         if !existing.is_empty() {
+            let mut conn = self.conn()?;
             let reusable = !force_restart && self.is_running(&mut conn, &existing).unwrap_or(false);
             if reusable {
+                state_del(&[
+                    provisioning_key(&identity.vm_id),
+                    provisioning_error_key(&identity.vm_id),
+                ]);
                 if let Some(h) = host() {
                     h.register_vm_context(
                         &identity.vm_id,
@@ -593,6 +627,19 @@ impl ModalVmPlugin {
                     "resumed": true,
                 }));
             }
+            // Another request already owns the replacement. Do not terminate
+            // the old sandbox twice or launch two expensive image builds.
+            if pending.is_some() {
+                return Ok(json!({
+                    "ok": true,
+                    "runtime": "modal",
+                    "machineId": identity.machine_id,
+                    "vmId": identity.vm_id,
+                    "status": "provisioning",
+                    "accepted": true,
+                    "deduplicated": true,
+                }));
+            }
             // A replacement is being created, so the recorded sandbox must go —
             // whether this is an explicit restart or a machine that turned out
             // to be dead. Terminating unconditionally is what stops a sandbox
@@ -606,8 +653,90 @@ impl ModalVmPlugin {
             let _ = block_on(conn.stub.sandbox_terminate(proto::SandboxTerminateRequest {
                 sandbox_id: existing.clone(),
             }));
+        } else if pending.is_some() {
+            return Ok(json!({
+                "ok": true,
+                "runtime": "modal",
+                "machineId": identity.machine_id,
+                "vmId": identity.vm_id,
+                "status": "provisioning",
+                "accepted": true,
+                "deduplicated": true,
+            }));
         }
 
+        if async_provision {
+            let marker = format!(
+                "{}:{}",
+                chrono::Utc::now().timestamp_millis(),
+                uuid::Uuid::new_v4()
+            );
+            let marker_key = provisioning_key(&identity.vm_id);
+            state_put(&marker_key, &marker);
+            state_del(&[provisioning_error_key(&identity.vm_id)]);
+
+            let plugin = self.clone();
+            let mut launch_packet = packet.clone();
+            if let Some(obj) = launch_packet.as_object_mut() {
+                obj.remove("asyncProvision");
+                obj.insert("asyncProvisionWorker".to_string(), JsonValue::Bool(true));
+            }
+            let vm_id = identity.vm_id.clone();
+            std::thread::Builder::new()
+                .name(format!("modal-provision-{}", vm_id))
+                .spawn(move || {
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        plugin.run_vm_inner(&launch_packet)
+                    }))
+                    .unwrap_or_else(|_| Err("modal provisioning worker panicked".to_string()));
+                    // Only the owner of the current marker may publish the
+                    // outcome. A later provision can supersede a stale one.
+                    if state_get(&marker_key) == marker {
+                        state_del(&[marker_key.clone()]);
+                        if let Err(error) = result {
+                            state_put(&provisioning_error_key(&vm_id), &error);
+                            log_vm(
+                                format!("modal provisioning failed for vm {}: {}", vm_id, error),
+                                vm_id,
+                                "runtime",
+                            );
+                        }
+                    } else if let Ok(response) = result {
+                        // Termination/deletion clears the marker. If that
+                        // happened while Modal was building, remove the exact
+                        // sandbox this cancelled worker eventually created.
+                        if let Some(sandbox_id) = response["sandboxId"].as_str() {
+                            if let Ok(mut conn) = plugin.conn() {
+                                let _ = block_on(conn.stub.sandbox_terminate(
+                                    proto::SandboxTerminateRequest {
+                                        sandbox_id: sandbox_id.to_string(),
+                                    },
+                                ));
+                            }
+                            let link_key = sandbox_link_key(&vm_id);
+                            if state_get(&link_key) == sandbox_id {
+                                state_del(&[link_key]);
+                            }
+                        }
+                    }
+                })
+                .map_err(|e| {
+                    state_del(&[provisioning_key(&identity.vm_id)]);
+                    format!("could not start modal provisioning worker: {}", e)
+                })?;
+
+            return Ok(json!({
+                "ok": true,
+                "runtime": "modal",
+                "machineId": identity.machine_id,
+                "entityId": identity.entity_id,
+                "vmId": identity.vm_id,
+                "status": "provisioning",
+                "accepted": true,
+            }));
+        }
+
+        let mut conn = self.conn()?;
         let app_id = self.app_id(&mut conn, &identity.machine_id)?;
         let image_id = self.image_id(
             &mut conn,
@@ -719,6 +848,7 @@ impl ModalVmPlugin {
         }
 
         state_put(&sandbox_link_key(&identity.vm_id), &response.sandbox_id);
+        state_del(&[provisioning_error_key(&identity.vm_id)]);
         if let Some(h) = host() {
             h.register_vm_context(&identity.vm_id, &identity.creature_id, &identity.machine_id);
         }
@@ -753,6 +883,9 @@ impl ModalVmPlugin {
     fn terminate_vm_inner(&self, packet: &JsonValue) -> Result<JsonValue, String> {
         let identity = ModalIdentity::from_packet(packet);
         let purge = packet["purge"].as_bool().unwrap_or(false);
+        // Cancels an in-flight asynchronous worker. Its completion path owns
+        // cleanup of the exact sandbox if Modal finishes after this call.
+        state_del(&[provisioning_key(&identity.vm_id)]);
         let sandbox_id = state_get(&sandbox_link_key(&identity.vm_id));
 
         let mut terminated = false;
@@ -791,6 +924,7 @@ impl ModalVmPlugin {
             state_del(&[
                 sandbox_link_key(&identity.vm_id),
                 volume_link_key(&identity.vm_id),
+                provisioning_error_key(&identity.vm_id),
             ]);
         }
 
@@ -838,6 +972,40 @@ impl ModalVmPlugin {
 
     fn status_vm_inner(&self, packet: &JsonValue) -> Result<JsonValue, String> {
         let identity = ModalIdentity::from_packet(packet);
+        if fresh_provisioning_marker(&identity.vm_id).is_some() {
+            return Ok(json!({
+                "ok": true,
+                "runtime": "modal",
+                "vmId": identity.vm_id,
+                "status": "provisioning",
+                "running": false,
+            }));
+        }
+        let marker_key = provisioning_key(&identity.vm_id);
+        if !state_get(&marker_key).is_empty() {
+            let error = "modal provisioning did not complete within 20 minutes";
+            state_del(&[marker_key]);
+            state_put(&provisioning_error_key(&identity.vm_id), error);
+            return Ok(json!({
+                "ok": false,
+                "runtime": "modal",
+                "vmId": identity.vm_id,
+                "status": "failed",
+                "running": false,
+                "error": error,
+            }));
+        }
+        let provision_error = state_get(&provisioning_error_key(&identity.vm_id));
+        if !provision_error.is_empty() {
+            return Ok(json!({
+                "ok": false,
+                "runtime": "modal",
+                "vmId": identity.vm_id,
+                "status": "failed",
+                "running": false,
+                "error": provision_error,
+            }));
+        }
         let sandbox_id = state_get(&sandbox_link_key(&identity.vm_id));
         if sandbox_id.is_empty() {
             return Ok(json!({

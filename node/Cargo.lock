@@ -656,6 +656,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "caspar-vm-sdk",
+ "chrono",
  "futures-util",
  "prost",
  "prost-types",
