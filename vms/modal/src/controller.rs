@@ -119,6 +119,67 @@ fn string_list(value: &JsonValue) -> Vec<String> {
     }
 }
 
+/// Modal's accepted memory range, in MiB. A request outside it is refused
+/// outright (`InvalidArgument`), so a packet that names no resources — which is
+/// what the platform sends when its sandbox settings were never seeded — must
+/// not be passed through as the 1 MiB the generic parser floors it to.
+const MIN_MEMORY_MB: u32 = 128;
+const DEFAULT_MEMORY_MB: u32 = 1024;
+
+/// Modal's *ephemeral disk* is a large scratch volume, sized in hundreds of
+/// GiB: "must be between 524288 and 3145728 MiB". It is NOT a sandbox's root
+/// disk, which Modal sizes itself and no request controls.
+const MIN_EPHEMERAL_DISK_MB: u32 = 524_288;
+const MAX_EPHEMERAL_DISK_MB: u32 = 3_145_728;
+
+/// What a sandbox is given, from the packet's `resources`.
+///
+/// The generic `VmResourceLimits` this shares with docker and firecracker
+/// describes a machine the node builds: RAM, cores, and a root disk in GiB.
+/// Modal has the first two and NOT the third — `ephemeral_disk_mb` is a
+/// separate, very large scratch volume, and a project's durable storage is the
+/// Volume mounted at /data regardless. Mapping `diskGb` onto it (the platform
+/// asks for single-digit GiB) produced a request two orders of magnitude below
+/// Modal's minimum, and every sandbox create was refused with
+/// `InvalidArgument` — reported to the client as "the project's machine could
+/// not be started". So an ephemeral disk is sent only when a caller asks for
+/// one BY NAME, and never inferred from `diskGb`.
+fn sandbox_resources(packet: &JsonValue, limits: &caspar_vm_sdk::VmResourceLimits) -> proto::Resources {
+    let memory_mb = match limits.ram_mb as u32 {
+        // The parser floors an absent/zero value to 1, which Modal rejects.
+        // Treat anything under Modal's own minimum as "not specified".
+        m if m < MIN_MEMORY_MB => DEFAULT_MEMORY_MB,
+        m => m,
+    };
+    let cpu_cores = (limits.cpu_cores as u32).max(1);
+
+    // `ephemeralDiskMb`, or `ephemeralDiskGb` for callers that think in GiB.
+    let requested_disk = packet["ephemeralDiskMb"]
+        .as_u64()
+        .or_else(|| packet["resources"]["ephemeralDiskMb"].as_u64())
+        .or_else(|| {
+            packet["ephemeralDiskGb"]
+                .as_u64()
+                .or_else(|| packet["resources"]["ephemeralDiskGb"].as_u64())
+                .map(|gb| gb.saturating_mul(1024))
+        })
+        .unwrap_or(0) as u32;
+    // Clamped rather than refused: a scratch disk is an optimisation, and
+    // failing a whole sandbox over a mis-sized one helps nobody.
+    let ephemeral_disk_mb = if requested_disk == 0 {
+        0
+    } else {
+        requested_disk.clamp(MIN_EPHEMERAL_DISK_MB, MAX_EPHEMERAL_DISK_MB)
+    };
+
+    proto::Resources {
+        memory_mb,
+        milli_cpu: cpu_cores.saturating_mul(1000),
+        ephemeral_disk_mb,
+        ..Default::default()
+    }
+}
+
 /// The command a sandbox runs as its entrypoint.
 ///
 /// A sandbox with no command would exit immediately and take the VM with it,
@@ -359,6 +420,42 @@ impl ModalVmPlugin {
         Ok(response.volume_id)
     }
 
+    /// Give a VM's Volume time to publish what was just written to it, before
+    /// the container holding those writes is destroyed.
+    ///
+    /// A Modal Volume mounted with `allow_background_commits` is not written
+    /// through: a write lands in the container's local layer and reaches the
+    /// volume on a periodic background commit. Terminating the sandbox does not
+    /// flush it, so writes newer than the last commit are lost — measured
+    /// against the real API, a file written and immediately followed by a
+    /// restart came back or vanished depending on where that timer happened to
+    /// be, and a woken machine could come back without the project's files.
+    ///
+    /// It cannot be forced. `VolumeCommit` exists, but Modal refuses it from
+    /// here — "commit() can only be called on a mounted volume inside a
+    /// container" — with or without a `container_id`; it is for a process
+    /// running INSIDE the sandbox, and a project's machine runs a plain Ubuntu
+    /// image with no Modal client in it. So what is available is to wait, and
+    /// the wait is bounded and explicit rather than hidden in a retry.
+    ///
+    /// This only costs anything on a teardown the platform itself initiates
+    /// (a re-provision, a delete). The common case — Modal ending a machine
+    /// after its idle window — is minutes past the last write and needs none of
+    /// it. `MODAL_VOLUME_SETTLE_MS=0` turns it off.
+    fn settle_volume_writes(&self, vm_id: &str) {
+        if state_get(&volume_link_key(vm_id)).is_empty() {
+            return;
+        }
+        let millis = std::env::var("MODAL_VOLUME_SETTLE_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(3_000);
+        if millis == 0 {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(millis));
+    }
+
     /// The sandbox id recorded for a VM, or an error naming the VM when none
     /// is — an unrecorded sandbox means the VM was never started here (or was
     /// already deleted), which every caller needs to distinguish from an RPC
@@ -398,18 +495,41 @@ impl ModalVmPlugin {
             .ok_or_else(|| format!("modal sandbox {} has no running task", sandbox_id))
     }
 
-    /// Whether a sandbox is still running, without mutating it.
+    /// Whether a sandbox is still usable, without mutating it.
+    ///
+    /// "Usable" is deliberately narrower than "not yet finished": every caller
+    /// acts on this by either exec'ing in the sandbox or handing it back as a
+    /// resumed VM, and both need a LIVE TASK. So the question asked is exactly
+    /// that one — `SandboxGetTaskId` reports the task and, once it has exited,
+    /// its result.
+    ///
+    /// `SandboxWait` is not used for this. Measured against the real API, a
+    /// zero-timeout wait answers `result: None` for a sandbox that has just
+    /// been terminated — for seconds afterwards — and the old implementation
+    /// read `None` as "still running". A run that found a recorded sandbox
+    /// therefore reported `resumed` for a machine that was already dead, never
+    /// replaced it, and every later exec failed with "Sandbox was cancelled by
+    /// user". That is the wake path for a project whose machine slept, so the
+    /// machine could never come back.
     fn is_running(&self, conn: &mut ModalConn, sandbox_id: &str) -> Result<bool, String> {
-        let request = proto::SandboxWaitRequest {
+        let request = proto::SandboxGetTaskIdRequest {
             sandbox_id: sandbox_id.to_string(),
-            timeout: 0.0,
+            // Poll, do not block: this is a "should I reuse this?" question
+            // asked on the way into `run_vm`, not a wait for readiness.
+            timeout: Some(0.0),
+            wait_until_ready: false,
         };
-        let response = block_on(conn.stub.sandbox_wait(request))?
-            .map_err(|e| format!("modal SandboxWait failed: {}", e))?
+        let response = block_on(conn.stub.sandbox_get_task_id(request))?
+            .map_err(|e| format!("modal SandboxGetTaskId failed: {}", e))?
             .into_inner();
-        // A wait with no timeout returns a result only once the sandbox has
-        // finished; an unset/UNSPECIFIED status means it is still running.
-        Ok(match response.result {
+        // No task was ever scheduled: the sandbox was terminated before it ran.
+        let Some(task_id) = response.task_id.filter(|id| !id.trim().is_empty()) else {
+            return Ok(false);
+        };
+        let _ = task_id;
+        // A task result at all means the task has exited; only an unset or
+        // UNSPECIFIED status is a task still doing something.
+        Ok(match response.task_result {
             None => true,
             Some(result) => {
                 result.status == proto::generic_result::GenericStatus::Unspecified as i32
@@ -454,11 +574,8 @@ impl ModalVmPlugin {
 
         let existing = state_get(&sandbox_link_key(&identity.vm_id));
         if !existing.is_empty() {
-            if force_restart {
-                let _ = block_on(conn.stub.sandbox_terminate(proto::SandboxTerminateRequest {
-                    sandbox_id: existing.clone(),
-                }));
-            } else if self.is_running(&mut conn, &existing).unwrap_or(false) {
+            let reusable = !force_restart && self.is_running(&mut conn, &existing).unwrap_or(false);
+            if reusable {
                 if let Some(h) = host() {
                     h.register_vm_context(
                         &identity.vm_id,
@@ -476,6 +593,19 @@ impl ModalVmPlugin {
                     "resumed": true,
                 }));
             }
+            // A replacement is being created, so the recorded sandbox must go —
+            // whether this is an explicit restart or a machine that turned out
+            // to be dead. Terminating unconditionally is what stops a sandbox
+            // that only LOOKED dead from being left behind, running and billing,
+            // with nothing pointing at it any more.
+            //
+            // The volume is committed first: the replacement mounts the same
+            // one, and whatever was written since the last background commit
+            // lives only in the container about to be destroyed.
+            self.settle_volume_writes(&identity.vm_id);
+            let _ = block_on(conn.stub.sandbox_terminate(proto::SandboxTerminateRequest {
+                sandbox_id: existing.clone(),
+            }));
         }
 
         let app_id = self.app_id(&mut conn, &identity.machine_id)?;
@@ -542,12 +672,7 @@ impl ModalVmPlugin {
         let definition = proto::Sandbox {
             entrypoint_args: entrypoint,
             image_id,
-            resources: Some(proto::Resources {
-                memory_mb: limits.ram_mb as u32,
-                milli_cpu: (limits.cpu_cores as u32).saturating_mul(1000),
-                ephemeral_disk_mb: (limits.disk_gb as u32).saturating_mul(1024),
-                ..Default::default()
-            }),
+            resources: Some(sandbox_resources(packet, &limits)),
             timeout_secs: sandbox_timeout_secs(packet, limits.max_exec_time_secs),
             workdir: packet["workdir"].as_str().map(|s| s.to_string()),
             open_ports_oneof: Some(proto::sandbox::OpenPortsOneof::OpenPorts(
@@ -633,6 +758,12 @@ impl ModalVmPlugin {
         let mut terminated = false;
         if !sandbox_id.is_empty() {
             let mut conn = self.conn()?;
+            // Make `/data` durable before the container that holds the
+            // uncommitted writes goes away. Skipped on a purge, where the
+            // volume is about to be deleted anyway.
+            if !purge {
+                self.settle_volume_writes(&identity.vm_id);
+            }
             block_on(conn.stub.sandbox_terminate(proto::SandboxTerminateRequest {
                 sandbox_id: sandbox_id.clone(),
             }))?
@@ -1412,6 +1543,33 @@ mod tests {
             entrypoint_args(&packet),
             vec!["sh", "-lc", "python -m http.server"]
         );
+    }
+
+    /// `diskGb` must never become Modal's ephemeral disk, and a packet with no
+    /// usable memory must not be sent as the 1 MiB the generic parser floors it
+    /// to — Modal refuses both, and every sandbox create failed with
+    /// `InvalidArgument` because of it.
+    #[test]
+    fn sandbox_resources_ignore_disk_gb_and_floor_memory() {
+        let packet = json!({
+            "resources": { "ramMb": 2048, "cpuCores": 2, "diskGb": 4 }
+        });
+        let res = sandbox_resources(&packet, &parse_vm_resource_limits(&packet));
+        assert_eq!(res.memory_mb, 2048);
+        assert_eq!(res.milli_cpu, 2000);
+        assert_eq!(res.ephemeral_disk_mb, 0, "diskGb must not become a scratch disk");
+
+        // What an unseeded deployment sends: a resource block of zeroes.
+        let empty = json!({ "resources": { "ramMb": 0, "cpuCores": 0, "diskGb": 0 } });
+        let res = sandbox_resources(&empty, &parse_vm_resource_limits(&empty));
+        assert!(res.memory_mb >= MIN_MEMORY_MB, "memory must be usable: {}", res.memory_mb);
+        assert_eq!(res.milli_cpu, 1000);
+        assert_eq!(res.ephemeral_disk_mb, 0);
+
+        // A scratch disk asked for BY NAME is honoured, clamped into range.
+        let scratch = json!({ "ephemeralDiskGb": 1, "resources": {} });
+        let res = sandbox_resources(&scratch, &parse_vm_resource_limits(&scratch));
+        assert_eq!(res.ephemeral_disk_mb, MIN_EPHEMERAL_DISK_MB);
     }
 
     #[test]

@@ -10,6 +10,8 @@
 
 mod client;
 mod controller;
+#[cfg(test)]
+mod live;
 mod models;
 
 use std::sync::Arc;

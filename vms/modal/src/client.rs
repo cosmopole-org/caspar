@@ -90,9 +90,27 @@ fn env_trimmed(key: &str) -> String {
 /// Client type Modal's server expects in `x-modal-client-type`
 /// (`CLIENT_TYPE_CLIENT`).
 const CLIENT_TYPE_CLIENT: &str = "1";
-/// Version string reported to Modal. It identifies this client in Modal's
-/// logs; it is not a compatibility assertion.
-const CLIENT_VERSION: &str = "caspar-vm-modal/0.1.0";
+/// Version string reported to Modal in `x-modal-client-version`.
+///
+/// Modal PARSES this and refuses anything it cannot read as a version of a
+/// supported client — `FailedPrecondition: Invalid client version` — so it is
+/// not a free-form identifier, however much it looks like one. A name-and-slash
+/// string ("caspar-vm-modal/0.1.0") is rejected outright, which is why this is
+/// a bare semver: it is a compatibility assertion, and Modal enforces it.
+///
+/// Modal raises its minimum supported client over time, so this is
+/// overridable from the environment: a node can be moved onto an accepted
+/// version without waiting for a release of this plugin.
+const DEFAULT_CLIENT_VERSION: &str = "1.0.0";
+
+pub(crate) fn client_version() -> String {
+    let configured = env_trimmed("MODAL_CLIENT_VERSION");
+    if configured.is_empty() {
+        DEFAULT_CLIENT_VERSION.to_string()
+    } else {
+        configured
+    }
+}
 
 /// The authenticated stub type produced by [`connect`].
 pub(crate) type ModalStub = ModalClientClient<
@@ -104,6 +122,7 @@ pub(crate) struct AuthInterceptor {
     token_id: String,
     token_secret: String,
     environment: String,
+    client_version: String,
 }
 
 impl tonic::service::Interceptor for AuthInterceptor {
@@ -117,7 +136,7 @@ impl tonic::service::Interceptor for AuthInterceptor {
         set(md, "x-modal-token-id", &self.token_id);
         set(md, "x-modal-token-secret", &self.token_secret);
         set(md, "x-modal-client-type", CLIENT_TYPE_CLIENT);
-        set(md, "x-modal-client-version", CLIENT_VERSION);
+        set(md, "x-modal-client-version", &self.client_version);
         if !self.environment.is_empty() {
             set(md, "x-modal-environment", &self.environment);
         }
@@ -210,6 +229,9 @@ pub(crate) fn connect() -> Result<ModalConn, String> {
         token_id: creds.token_id.clone(),
         token_secret: creds.token_secret.clone(),
         environment: creds.environment.clone(),
+        // Read per connect, not once per process, so a node that has to move
+        // onto a different accepted version only needs a restart.
+        client_version: client_version(),
     };
     Ok(ModalConn {
         stub: ModalClientClient::with_interceptor(channel.clone(), interceptor)
@@ -243,8 +265,14 @@ mod tests {
     /// the node does.
     #[test]
     fn connects_from_a_thread_with_no_tokio_runtime() {
-        std::env::set_var("MODAL_TOKEN_ID", "ak-test");
-        std::env::set_var("MODAL_TOKEN_SECRET", "as-test");
+        // Placeholders only when the process has no real credentials. The
+        // channel and the credentials behind it are cached process-wide, so
+        // overwriting a configured token here would break every live test that
+        // runs after this one in the same binary.
+        if !ModalCredentials::from_env().is_ok() {
+            std::env::set_var("MODAL_TOKEN_ID", "ak-test");
+            std::env::set_var("MODAL_TOKEN_SECRET", "as-test");
+        }
 
         let built = std::thread::spawn(|| {
             assert!(
