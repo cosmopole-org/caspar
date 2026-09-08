@@ -478,6 +478,78 @@ fn a_slept_machine_is_woken_with_its_files() {
     }
 }
 
+/// The exact production shape: Modal itself expires the task, then Caspar
+/// accepts a detached replacement. No exec may keep targeting the expired id
+/// while that replacement is being created.
+#[test]
+#[ignore]
+fn an_idle_timed_out_machine_wakes_asynchronously() {
+    if !have_credentials() {
+        eprintln!("skipping: Modal credentials are not set");
+        return;
+    }
+    let plugin = plugin();
+    let machine_id = "caspar-live-space";
+    let vm_id = scratch_vm_id("async-wake");
+    let mut packet = run_packet(machine_id, &vm_id);
+    packet["idleTimeoutSecs"] = json!(10);
+
+    let started = plugin
+        .run_vm(&packet)
+        .unwrap_or_else(|e| panic!("run_vm failed: {}", e));
+    assert_eq!(started["ok"], json!(true), "run_vm: {}", started);
+    let wrote = plugin
+        .exec_vm(&exec_packet(machine_id, &vm_id, "echo awake-again > /data/async-wake.txt"))
+        .unwrap_or_else(|e| panic!("write failed: {}", e));
+    assert_eq!(wrote["ok"], json!(true), "write: {}", wrote);
+
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let expiry_deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+        loop {
+            let status = plugin.status_vm(&packet).unwrap_or_else(|e| panic!("status failed: {}", e));
+            if status["status"] == json!("stopped") {
+                break;
+            }
+            assert!(std::time::Instant::now() < expiry_deadline, "Modal did not idle-timeout: {}", status);
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+
+        let mut wake = packet.clone();
+        wake["asyncProvision"] = json!(true);
+        let accepted = plugin
+            .run_vm(&wake)
+            .unwrap_or_else(|e| panic!("async wake failed: {}", e));
+        assert_eq!(accepted["accepted"], json!(true), "async wake: {}", accepted);
+        assert_eq!(accepted["status"], json!("provisioning"), "async wake: {}", accepted);
+
+        // The dead sandbox link is removed synchronously. A caller now sees
+        // "not ready" and can poll; it can never receive IdleTimeout from the
+        // task whose replacement is already underway.
+        let immediate = plugin.exec_vm(&exec_packet(machine_id, &vm_id, "true"));
+        assert!(immediate.is_err(), "exec unexpectedly targeted a sandbox: {:?}", immediate);
+        assert!(!immediate.unwrap_err().contains("IdleTimeout"));
+
+        let wake_deadline = std::time::Instant::now() + std::time::Duration::from_secs(240);
+        loop {
+            let status = plugin.status_vm(&packet).unwrap_or_else(|e| panic!("wake status failed: {}", e));
+            if status["status"] == json!("running") {
+                break;
+            }
+            assert!(std::time::Instant::now() < wake_deadline, "replacement did not start: {}", status);
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+        let read_back = plugin
+            .exec_vm(&exec_packet(machine_id, &vm_id, "cat /data/async-wake.txt"))
+            .unwrap_or_else(|e| panic!("read after wake failed: {}", e));
+        assert_eq!(read_back["stdout"].as_str().unwrap_or("").trim(), "awake-again");
+    }));
+
+    let _ = plugin.delete_vm(&delete_packet(machine_id, &vm_id));
+    if let Err(payload) = outcome {
+        std::panic::resume_unwind(payload);
+    }
+}
+
 /// A sandbox's public URLs, which is how a member reaches anything running on
 /// their project's machine — the desktop `spaces/installGui` puts there, a
 /// preview server an agent starts.

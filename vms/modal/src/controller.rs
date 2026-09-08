@@ -653,6 +653,11 @@ impl ModalVmPlugin {
             let _ = block_on(conn.stub.sandbox_terminate(proto::SandboxTerminateRequest {
                 sandbox_id: existing.clone(),
             }));
+            // Nothing may execute against this id once replacement has begun.
+            // Keeping the dead link until the worker records its successor made
+            // every concurrent exec hit the expired task and surface
+            // `IdleTimeout`, even though wake provisioning was already active.
+            state_del(&[sandbox_link_key(&identity.vm_id)]);
         } else if pending.is_some() {
             return Ok(json!({
                 "ok": true,
