@@ -532,3 +532,88 @@ fn a_machine_publishes_reachable_endpoints() {
         std::panic::resume_unwind(payload);
     }
 }
+
+/// Look inside a project's machine, by the vm id the platform gave it.
+///
+/// A project's runtime installs itself from the sandbox's entrypoint and logs to
+/// `/var/log/decillion/bridge.log` — outside `/data`, so `spaces/files` cannot
+/// reach it by design. When a project reports its runtime as "installing"
+/// forever there is otherwise nothing to look at, which is exactly when
+/// somebody needs to look. The sandbox is found by the `caspar-vm-id` tag the
+/// plugin stamps at create time, so only the vm id (and the app's machine id)
+/// is needed — no node state.
+///
+///     MODAL_TOKEN_ID=… MODAL_TOKEN_SECRET=… \
+///     PROBE_MACHINE_ID='11@store' PROBE_VM_ID='12@spaces.vm' \
+///     PROBE_CMD='tail -50 /var/log/decillion/bridge.log' \
+///       cargo test -p caspar-vm-modal probe_project_machine -- --ignored --nocapture
+#[test]
+#[ignore]
+fn probe_project_machine() {
+    if !have_credentials() {
+        eprintln!("skipping: MODAL_TOKEN_ID / MODAL_TOKEN_SECRET are not set");
+        return;
+    }
+    let machine_id = std::env::var("PROBE_MACHINE_ID").unwrap_or_default();
+    let vm_id = std::env::var("PROBE_VM_ID").unwrap_or_default();
+    let command = std::env::var("PROBE_CMD")
+        .unwrap_or_else(|_| "tail -60 /var/log/decillion/bridge.log 2>&1".to_string());
+    if machine_id.is_empty() || vm_id.is_empty() {
+        eprintln!("set PROBE_MACHINE_ID and PROBE_VM_ID");
+        return;
+    }
+
+    let mut conn = crate::client::connect().expect("connect");
+    let app_id = crate::client::block_on(conn.stub.app_get_or_create(
+        crate::proto::AppGetOrCreateRequest {
+            app_name: crate::models::modal_app_name(&machine_id),
+            environment_name: conn.environment.clone(),
+            object_creation_type: crate::proto::ObjectCreationType::CreateIfMissing as i32,
+        },
+    ))
+    .expect("transport")
+    .expect("app")
+    .into_inner()
+    .app_id;
+
+    let listed = crate::client::block_on(conn.stub.sandbox_list(
+        crate::proto::SandboxListRequest {
+            app_id,
+            environment_name: conn.environment.clone(),
+            include_finished: false,
+            ..Default::default()
+        },
+    ))
+    .expect("transport")
+    .expect("list")
+    .into_inner();
+
+    let sandbox = listed
+        .sandboxes
+        .into_iter()
+        .find(|s| s.tags.iter().any(|t| t.tag_name == "caspar-vm-id" && t.tag_value == vm_id));
+    let Some(sandbox) = sandbox else {
+        println!("no live sandbox tagged caspar-vm-id={}", vm_id);
+        return;
+    };
+    println!("sandbox {} for vm {}", sandbox.id, vm_id);
+
+    // Reuse the plugin's own exec so what is observed is what the platform does.
+    set_host(Arc::new(MemoryHost::default()));
+    if let Some(h) = caspar_vm_sdk::host::host() {
+        let _ = h.state_apply_ops(&[KvOp {
+            op: "put".into(),
+            key: crate::models::sandbox_link_key(&vm_id),
+            val: sandbox.id.clone(),
+        }]);
+    }
+    let plugin = {
+        let meta = VmPluginMeta::from_config_str(include_str!("../vm.config.json")).unwrap();
+        ModalVmPlugin::new(meta)
+    };
+    let out = plugin
+        .exec_vm(&exec_packet(&machine_id, &vm_id, &command))
+        .unwrap_or_else(|e| panic!("exec failed: {}", e));
+    println!("exit={} \n--- stdout ---\n{}\n--- stderr ---\n{}",
+        out["exitCode"], out["stdout"].as_str().unwrap_or(""), out["stderr"].as_str().unwrap_or(""));
+}
