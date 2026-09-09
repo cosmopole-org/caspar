@@ -672,33 +672,33 @@ pub(crate) fn handle_unified_host_call(packet: &JsonValue) -> String {
         "transfer" => host_fn_transfer(&input),
         "consumeLock" => host_fn_consume_lock(&input),
         "lockToken" => host_fn_lock_token(&input),
-        "startHold" => {
-            let caller = resolve_cached_vm_hierarchy(packet, &input).program_id;
-            host_fn_start_hold(&caller, &input)
-        }
-        "settleHold" => {
-            let caller = resolve_cached_vm_hierarchy(packet, &input).program_id;
-            host_fn_settle_hold(&caller, &input)
-        }
-        "releaseHold" => {
-            let caller = resolve_cached_vm_hierarchy(packet, &input).program_id;
-            host_fn_release_hold(&caller, &input)
-        }
+        // The meter's authority operations. Each verifies that the resolved
+        // caller is the hold's or pool's registered meter before signing the
+        // request as the node owner, so who the caller IS decides everything.
+        //
+        // `ctx.program_id`, not the VM-only resolver these used to use. That one
+        // resolves an out-of-band VM context by `vmId` and returns EMPTY for any
+        // caller that is not a VM — and every registered meter on this platform
+        // is a WASM creature, which has no vmId. So the authority check saw an
+        // anonymous caller and refused every one of them: no pool reservation,
+        // no settlement, and therefore no finished run ever billed. `ctx` is the
+        // same node-resolved identity `publishUpdate` and `registerBridgeToken`
+        // already trust, and it still prefers the cached VM context when there
+        // is one, so a container meter resolves exactly as before.
+        "startHold" => host_fn_start_hold(&ctx.program_id, &input),
+        "settleHold" => host_fn_settle_hold(&ctx.program_id, &input),
+        "releaseHold" => host_fn_release_hold(&ctx.program_id, &input),
         "reservePool" => {
-            let caller = resolve_cached_vm_hierarchy(packet, &input).program_id;
-            host_fn_pool_authority_call(&caller, &input, "/creatures/reservePool", "pool reservation")
+            host_fn_pool_authority_call(&ctx.program_id, &input, "/creatures/reservePool", "pool reservation")
         }
         "settlePool" => {
-            let caller = resolve_cached_vm_hierarchy(packet, &input).program_id;
-            host_fn_pool_authority_call(&caller, &input, "/creatures/settlePool", "pool settlement")
+            host_fn_pool_authority_call(&ctx.program_id, &input, "/creatures/settlePool", "pool settlement")
         }
         "releasePool" => {
-            let caller = resolve_cached_vm_hierarchy(packet, &input).program_id;
-            host_fn_pool_authority_call(&caller, &input, "/creatures/releasePool", "pool release")
+            host_fn_pool_authority_call(&ctx.program_id, &input, "/creatures/releasePool", "pool release")
         }
         "debitPool" => {
-            let caller = resolve_cached_vm_hierarchy(packet, &input).program_id;
-            host_fn_pool_authority_call(&caller, &input, "/creatures/debitPool", "pool debit")
+            host_fn_pool_authority_call(&ctx.program_id, &input, "/creatures/debitPool", "pool debit")
         }
         "createProgram" => host_fn_create_program(&input),
         "deleteProgram" | "deleteOwnedProgram" => host_fn_delete_program(&input),
