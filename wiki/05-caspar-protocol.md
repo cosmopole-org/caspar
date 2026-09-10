@@ -232,12 +232,11 @@ the VM (e.g. docker) override this to proxy directly.
 
 ---
 
-## The host-call ABI (WASM guest ⇄ host)
+## The host-call ABI (in-process guest ⇄ host)
 
-Every interaction a WASM creature has with the platform flows through a single
-guest import, **`hostCall`**, which takes a JSON request in guest memory and
-returns a packed `(offset << 32 | len)` handle to a JSON response. The request
-shape is:
+Every interaction an in-process creature has with the platform flows through a
+single entry point, **`hostCall`**, which takes a JSON request and returns a
+JSON response. The request shape is:
 
 ```json
 { "op": "<operation>", "input": { ... } }
@@ -261,11 +260,28 @@ The host recognises these operations (from `vms/wasm/src/host_calls.rs`):
 | `verifyProgramExecution` (`elpifyProof`) | Verify a program-execution proof via the provable runtime plugin. |
 | *anything else* | Forwarded to the unified host-call dispatcher (`signalUser`, `signalGroup`, …), with `programId`/`machineId` injected. |
 
-Guest exports the host relies on: `malloc` (to allocate the response buffer),
-`memory`, and an entry point such as `update`. Legacy single-purpose exports
-(`output`, `consoleLog`, `plantTrigger`, `httpPost`, `runDocker`, `execDocker`,
-`copyToDocker`, `signalStore`, `trxPut/Get/Del/GetByPrefix`) are still supported
-for older creature SDK builds.
+### Transports
+
+The op table above is one behaviour with two carriers, and a creature must not
+be able to tell which one it is on by the *result* of a host call:
+
+| runtime | how the request and response cross | entry point |
+|---------|-----------------------------------|-------------|
+| `wasm` | the guest writes the request into its linear memory and passes `(offset, len)`; the host allocates the reply with the guest's exported `malloc`, writes it into `memory`, and returns a packed `(offset << 32 \| len)` handle | exported `update` |
+| `javascript` | the request and response are ordinary strings — QuickJS values cross directly, so there is no guest allocator involved | `globalThis.update` |
+
+Guest exports the wasm host relies on: `malloc` (to allocate the response
+buffer), `memory`, and an entry point such as `update`. Legacy single-purpose
+exports (`output`, `consoleLog`, `plantTrigger`, `httpPost`, `runDocker`,
+`execDocker`, `copyToDocker`, `signalStore`, `trxPut/Get/Del/GetByPrefix`) are
+still supported for older creature SDK builds.
+
+In **both** runtimes, an op the table does not name is forwarded to the unified
+host-call dispatcher under an envelope the NODE stamps with the calling
+program's identity — taken from the VM's runtime context, never from anything
+the guest supplied. Operation *arguments* that name other programs (a deploy
+target, a signal recipient) are passed through untouched; the identity fields
+are not the guest's to set.
 
 ---
 

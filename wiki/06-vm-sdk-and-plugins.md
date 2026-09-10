@@ -185,8 +185,9 @@ Capabilities:
 - `verifier_plugin()` — the proof-verifying plugin.
 - `is_supported`, `is_managed`, `supports_chain_trxs`.
 - **Cross-plugin delegation:** `run_on(runtime, packet)` /
-  `terminate_on(runtime, packet)` — used by runtimes layered on a sibling (e.g.
-  `javascript` delegates to the default `wasm` runtime).
+  `terminate_on(runtime, packet)` / `delete_on(runtime, packet)` — for a runtime
+  that layers on a sibling rather than executing itself. No shipped plugin does
+  today; `javascript` used to, and executed nothing as a result.
 
 ---
 

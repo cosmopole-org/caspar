@@ -136,7 +136,7 @@ amplification and never exposing partial state between host calls.
 | `docker` | OCI container images (gVisor-sandboxed) via the Bollard client |
 | `elpify` | Miden STARK VM (proof-generating MASM execution) |
 | `elpian` | native Rust AST VM for high-speed computation |
-| `javascript` | JavaScript runtime, layered on the wasm runtime |
+| `javascript` | QuickJS JavaScript runtime (full host-call ABI, in-process) |
 | `fire` (firecracker) | micro-VM hypervisor for hardware-isolated workloads |
 
 ---

@@ -2,7 +2,7 @@
 name = "caspar-vm-javascript"
 version = "0.1.0"
 edition = "2021"
-description = "Caspar VM plugin: JavaScript runtime (key: javascript)"
+description = "Caspar VM plugin: JavaScript runtime (key: javascript) — QuickJS, with the full Caspar host-call ABI"
 
 [lib]
 name = "caspar_vm_javascript"
@@ -11,5 +11,11 @@ path = "src/lib.rs"
 [dependencies]
 caspar-vm-sdk = { path = "../../vm-sdk" }
 # The JS→MASM transpiler is owned by the elpify plugin (its crates/ folder).
+# It is the provable-execution validation step (`exec_vm`), not the execution
+# path — a script that will not transpile still runs on QuickJS.
 elpify-lang = { path = "../elpify/crates/elpify-lang" }
+# QuickJS. `parallel` is deliberately OFF: a run owns its runtime on one
+# thread, so the Send/Sync wrappers would buy nothing but overhead, and the
+# per-run state is held in an Rc<RefCell<_>> that never crosses a thread.
+rquickjs = { version = "0.13", default-features = false, features = ["bindgen", "std"] }
 serde_json = "1"

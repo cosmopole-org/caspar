@@ -1,16 +1,16 @@
 {
   "key": "javascript",
   "name": "JavaScript VM",
-  "version": "0.1.0",
-  "description": "Runs JavaScript program entities; execution is layered on the managed wasm runtime and sources can be transpiled to MASM for provable execution.",
+  "version": "0.2.0",
+  "description": "Runs JavaScript program entities in-process on QuickJS with the full Caspar host-call ABI; sources can also be transpiled to MASM for provable execution.",
   "aliases": ["quickjs", "js"],
-  "artifactExtensions": [],
+  "artifactExtensions": [".js"],
   "inProcess": true,
   "defaultRuntime": false,
   "entityFileName": "module.js",
   "acceptsExtraFiles": false,
   "buildOnDeploy": false,
-  "setEntityLinksOnDeploy": false,
-  "supportsChainTrxs": false,
+  "setEntityLinksOnDeploy": true,
+  "supportsChainTrxs": true,
   "restorable": false
 }

@@ -51,23 +51,83 @@ via `registry::run_on("wasm", packet)`.
 
 ---
 
-## `javascript` — JavaScript VM
+## `javascript` — QuickJS JavaScript VM
 
-**What it is:** runs JavaScript program entities. Execution is **layered on the
-managed wasm runtime** (resolved dynamically as the default runtime), and
-sources can be transpiled to MASM for provable execution.
+**What it is:** the platform's second in-process runtime. It executes deployed
+JavaScript program entities on **QuickJS** (via `rquickjs`) with the full Caspar
+host-call ABI, the per-VM JSON transaction, memory and stack limits, and a real
+**interrupt-based** execution deadline. A creature written in JavaScript has
+exactly the same host capabilities as one written for `wasm`; only the language
+differs.
 
 **Config highlights:** `key: javascript`, `aliases: ["quickjs","js"]`,
-`inProcess: true`, `entityFileName: module.js`.
+`inProcess: true`, `entityFileName: module.js`, `artifactExtensions: [".js"]`,
+`setEntityLinksOnDeploy: true`, `supportsChainTrxs: true`,
+`acceptsExtraFiles: false`.
 
-**How it runs:** `run_vm` / `terminate_vm` simply delegate to the platform
-default runtime: `registry::run_on(&self.backing_runtime()?, packet)` where
-`backing_runtime()` is `registry::default_key()`. `exec_vm` transpiles the
-script to MASM (`transpile_js_to_masm(script_path)`) as a validation/build step.
+**What a deployed entity looks like.** One self-contained script — no module
+loader, no filesystem, no imports resolved at run time (`acceptsExtraFiles` is
+false, so there is nothing beside it to import). Bundle to a single file (an
+esbuild `iife` build, say) and assign the entry point:
 
-**Implement/extend:** this is the canonical example of a runtime that reuses a
-sibling. To build your own layered runtime, resolve a backing key and delegate
-with `registry::run_on` / `registry::terminate_on`.
+```js
+globalThis.update = function (inputJson) {
+  const p = JSON.parse(inputJson);
+  const rec = hostCall("getJson", { key: "Json::Counter::" + p.id, path: "doc" });
+  const next = (rec.data?.n ?? 0) + 1;
+  hostCall("putJson", { key: "Json::Counter::" + p.id, path: "doc", data: { n: next } });
+  return { ok: true, n: next };            // the VM's output
+};
+```
+
+`update` may be `async`: the runtime drives the promise job queue to quiescence
+and reports what it settled on. It never waits on anything the host could
+resolve later, because **every host call is synchronous** — there is no host-side
+async to await, and a promise still pending when the queue goes quiet is
+reported as a failure rather than left hanging.
+
+**How it runs:** `run_vm` validates `astPath`, then spawns a dedicated thread
+(every panic contained inside it, surfaced as a `vmOutput` error packet, the VM
+slot always released). Inside it builds one QuickJS runtime and context, applies
+`ram_mb` as the heap limit and a 1 MiB stack cap, arms the interrupt handler,
+evaluates the guest prelude and then the entity, calls `update(input)`, drains
+the job queue, commits, and finalises. A context lives for one run: there is no
+warm-VM pool, because building a QuickJS context costs microseconds and a fresh
+one makes state bleeding between signals impossible.
+
+**How it talks to the host:** through the `hostCall` global — the same
+`{"op":…,"input":{…}}` protocol and the same op table as the wasm ABI
+(see [Protocol → host-call ABI](05-caspar-protocol.md#the-host-call-abi)),
+with the string passed and returned directly instead of through guest memory.
+Identity is stamped node-side from the VM's runtime context on every forwarded
+op, exactly as in `wasm`, so a guest can neither fabricate nor spoof it.
+
+**The guest prelude** additionally provides `console.*` (routed to the VM log,
+not the node's stdout), a frozen `caspar` identity object
+(`machineId` / `programId` / `vmId` / `storeId` / `runtime`), `btoa`/`atob`,
+`TextEncoder`/`TextDecoder` (UTF-8), and `structuredClone`. QuickJS supplies the
+rest of ES2023.
+
+**Setting the output:** return a value from `update` (a string is used verbatim,
+anything else is JSON-encoded), or call the `output` host op. An explicit
+`output` call **wins**, so a creature ported from `wasm` behaves identically.
+
+**Termination is real.** QuickJS exposes an interrupt hook, so both the exec
+deadline (`max_exec_time_secs`) and `terminateVm` genuinely stop a running
+script — including one looping inside a `.then()`. The wasm runtime can only ask
+a guest to stop; this one does not have to. A terminate naming a `vmId` stops
+that instance; one naming only a machine stops every instance of it. A
+cancellable watchdog thread backs the interrupt for the case it cannot reach: a
+run blocked in a host call rather than in JavaScript.
+
+**`exec_vm`** transpiles the script to MASM (`transpile_js_to_masm`) as a
+provable-execution validation step. That is the `elpify` path, not the execution
+path — a script that will not transpile still runs perfectly well here.
+
+**Implement/extend:** the op table is `src/host_calls.rs` (keep it in step with
+`vms/wasm/src/host_calls.rs` — a creature must not be able to tell which
+in-process runtime it landed on by the behaviour of a host call); the engine is
+`src/runtime.rs`; the guest prelude is `src/prelude.js`.
 
 ---
 

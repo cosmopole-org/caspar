@@ -1,6 +1,16 @@
 //! Caspar VM plugin: JavaScript runtime (`javascript`).
+//!
+//! A creature written in JavaScript is one self-contained bundle deployed as
+//! the entity `module.js`. It runs in-process on QuickJS and reaches the
+//! platform through exactly one import — `hostCall` — which speaks the same
+//! `{op, input}` protocol, with the same op table, as the wasm runtime's.
 
 mod controller;
+mod host_calls;
+mod runtime;
+
+#[cfg(test)]
+mod tests;
 
 use std::sync::Arc;
 

@@ -12,7 +12,7 @@ operation dynamically through the SDK's plugin registry.
 | folder        | key          | description                                        |
 |---------------|--------------|----------------------------------------------------|
 | `wasm/`       | `wasm`       | WasmEdge WebAssembly VM (the default runtime)      |
-| `javascript/` | `javascript` | JavaScript entities (layered on the wasm runtime)  |
+| `javascript/` | `javascript` | JavaScript entities on QuickJS (full host-call ABI) |
 | `docker/`     | `docker`     | Docker containers (gVisor-sandboxed)               |
 | `fire/`       | `fire`       | Firecracker microVMs                               |
 | `elpian/`     | `elpian`     | Elpian AST interpreter                             |
