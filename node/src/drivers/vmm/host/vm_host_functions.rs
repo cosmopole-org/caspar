@@ -603,6 +603,12 @@ pub(crate) fn handle_unified_host_call(packet: &JsonValue) -> String {
         "elpifyProof" | "verifyProgramExecution" => host_fn_verify_program(&input),
         "protocolApi" | "callProtocolApi" => host_fn_protocol_api(&input),
         "signal" => host_fn_signal(&input),
+        // A JavaScript creature reaches this unified dispatcher directly. Do
+        // not send its alarm through the legacy wasm callback transport: that
+        // path has no request/response owner here and the trigger can be lost
+        // while the guest receives an empty success. The micro host action is
+        // the same VMM implementation used by the callback path.
+        "plantTrigger" => host_fn_micro(op, &input),
         // Read-only execution-host identity. The node supplies every returned
         // identity and checks the target against its in-process listener table;
         // a guest can ask about a program id but cannot claim a node owner or
