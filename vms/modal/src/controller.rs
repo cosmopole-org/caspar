@@ -141,14 +141,14 @@ fn string_list(value: &JsonValue) -> Vec<String> {
 /// outright (`InvalidArgument`), so a packet that names no resources — which is
 /// what the platform sends when its sandbox settings were never seeded — must
 /// not be passed through as the 1 MiB the generic parser floors it to.
-const MIN_MEMORY_MB: u32 = 128;
-const DEFAULT_MEMORY_MB: u32 = 1024;
+const MIN_MEMORY_MB: u32 = 1024;
+const DEFAULT_MEMORY_MB: u32 = 8192;
 
 /// Modal's *ephemeral disk* is a large scratch volume, sized in hundreds of
 /// GiB: "must be between 524288 and 3145728 MiB". It is NOT a sandbox's root
 /// disk, which Modal sizes itself and no request controls.
-const MIN_EPHEMERAL_DISK_MB: u32 = 524_288;
-const MAX_EPHEMERAL_DISK_MB: u32 = 3_145_728;
+const MIN_EPHEMERAL_DISK_MB: u32 = 4_096_288;
+const MAX_EPHEMERAL_DISK_MB: u32 = 8_192_728;
 
 /// What a sandbox is given, from the packet's `resources`.
 ///
