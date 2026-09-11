@@ -169,7 +169,7 @@ fn sandbox_resources(packet: &JsonValue, limits: &caspar_vm_sdk::VmResourceLimit
         m if m < MIN_MEMORY_MB => DEFAULT_MEMORY_MB,
         m => m,
     };
-    let cpu_cores = (limits.cpu_cores as u32).max(1);
+    let cpu_cores = (limits.cpu_cores as u32).max(4);
 
     // `ephemeralDiskMb`, or `ephemeralDiskGb` for callers that think in GiB.
     let requested_disk = packet["ephemeralDiskMb"]
@@ -192,7 +192,7 @@ fn sandbox_resources(packet: &JsonValue, limits: &caspar_vm_sdk::VmResourceLimit
 
     proto::Resources {
         memory_mb,
-        milli_cpu: cpu_cores.saturating_mul(1000),
+        milli_cpu: cpu_cores.saturating_mul(4000),
         ephemeral_disk_mb,
         ..Default::default()
     }
