@@ -395,8 +395,20 @@ class Caspar {
         ),
       ]);
       await this.authenticate();
-      this.username = (await this.creatures.me()).obj?.user?.username;
+      const me = await this.creatures.me();
+      this.username =
+        me.obj?.user?.username ?? me.obj?.creature?.username ?? username;
       console.log("Login successful");
+      // The key is already persisted in auth/privateKey.txt. Returning the raw
+      // login response makes the generic command printer echo that secret to
+      // terminals and CI logs, defeating the point of the credential file.
+      return {
+        resCode: 0,
+        obj: {
+          message: "login successful",
+          user: { id: this.userId, username: this.username },
+        },
+      };
     }
     return res;
   }
@@ -1700,6 +1712,9 @@ function commandRequiresAuth(command: string): boolean {
 
 async function runNonInteractive(argv: string[]): Promise<number> {
   const firstArg = argv[0]?.trim();
+  if (firstArg === "--help" || firstArg === "-h") {
+    return await runParsedCommand(["help", ...argv.slice(1)]);
+  }
   // Offline-only fast paths: browse help / scaffold templates without a node.
   if (
     firstArg === "help" ||
