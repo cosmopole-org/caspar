@@ -144,6 +144,15 @@ fn string_list(value: &JsonValue) -> Vec<String> {
 const MIN_MEMORY_MB: u32 = 1024;
 const DEFAULT_MEMORY_MB: u32 = 8192;
 
+/// What an unsized sandbox gets for CPU, and the milli-CPU Modal charges a
+/// core at. `cpuCores` has the same "absent reads as 1" problem as `ramMb`, and
+/// unlike memory there is no invalid range to detect it by — so the packet
+/// itself is what decides: a `resources` block that names no `cpuCores` (or
+/// names 0) is unsized and gets the default, while an explicit `cpuCores: 1`
+/// is a caller's choice and stays one core.
+const DEFAULT_CPU_CORES: u32 = 4;
+const MILLI_CPU_PER_CORE: u32 = 1000;
+
 /// Modal's *ephemeral disk* is a large scratch volume, sized in hundreds of
 /// GiB: "must be between 524288 and 3145728 MiB". It is NOT a sandbox's root
 /// disk, which Modal sizes itself and no request controls.
@@ -161,7 +170,12 @@ const MAX_EPHEMERAL_DISK_MB: u32 = 8_192_728;
 /// Modal's minimum, and every sandbox create was refused with
 /// `InvalidArgument` — reported to the client as "the project's machine could
 /// not be started". So an ephemeral disk is sent only when a caller asks for
-/// one BY NAME, and never inferred from `diskGb`.
+/// one BY NAME, and never inferred from `diskGb`. There is therefore no
+/// single-digit-GiB disk to default: a modal VM's durable storage is the
+/// Volume, which Modal sizes on demand.
+///
+/// A packet that sizes nothing gets the platform default machine: 4 cores and
+/// 8 GiB of RAM.
 fn sandbox_resources(packet: &JsonValue, limits: &caspar_vm_sdk::VmResourceLimits) -> proto::Resources {
     let memory_mb = match limits.ram_mb as u32 {
         // The parser floors an absent/zero value to 1, which Modal rejects.
@@ -169,7 +183,10 @@ fn sandbox_resources(packet: &JsonValue, limits: &caspar_vm_sdk::VmResourceLimit
         m if m < MIN_MEMORY_MB => DEFAULT_MEMORY_MB,
         m => m,
     };
-    let cpu_cores = (limits.cpu_cores as u32).max(4);
+    let cpu_cores = match packet["resources"]["cpuCores"].as_u64() {
+        Some(cores) if cores > 0 => cores as u32,
+        _ => DEFAULT_CPU_CORES,
+    };
 
     // `ephemeralDiskMb`, or `ephemeralDiskGb` for callers that think in GiB.
     let requested_disk = packet["ephemeralDiskMb"]
@@ -192,7 +209,7 @@ fn sandbox_resources(packet: &JsonValue, limits: &caspar_vm_sdk::VmResourceLimit
 
     proto::Resources {
         memory_mb,
-        milli_cpu: cpu_cores.saturating_mul(4000),
+        milli_cpu: cpu_cores.saturating_mul(MILLI_CPU_PER_CORE),
         ephemeral_disk_mb,
         ..Default::default()
     }
@@ -1732,12 +1749,25 @@ mod tests {
         assert_eq!(res.milli_cpu, 2000);
         assert_eq!(res.ephemeral_disk_mb, 0, "diskGb must not become a scratch disk");
 
-        // What an unseeded deployment sends: a resource block of zeroes.
+        // What an unseeded deployment sends: a resource block of zeroes. It
+        // gets the default machine, not whatever zero floors to.
         let empty = json!({ "resources": { "ramMb": 0, "cpuCores": 0, "diskGb": 0 } });
         let res = sandbox_resources(&empty, &parse_vm_resource_limits(&empty));
+        assert_eq!(res.memory_mb, DEFAULT_MEMORY_MB);
         assert!(res.memory_mb >= MIN_MEMORY_MB, "memory must be usable: {}", res.memory_mb);
-        assert_eq!(res.milli_cpu, 1000);
+        assert_eq!(res.milli_cpu, DEFAULT_CPU_CORES * MILLI_CPU_PER_CORE);
         assert_eq!(res.ephemeral_disk_mb, 0);
+
+        // A packet with no `resources` at all is unsized the same way.
+        let bare = json!({});
+        let res = sandbox_resources(&bare, &parse_vm_resource_limits(&bare));
+        assert_eq!(res.memory_mb, DEFAULT_MEMORY_MB);
+        assert_eq!(res.milli_cpu, DEFAULT_CPU_CORES * MILLI_CPU_PER_CORE);
+
+        // A deliberate single core is a choice, not an absent setting.
+        let one = json!({ "resources": { "ramMb": 2048, "cpuCores": 1 } });
+        let res = sandbox_resources(&one, &parse_vm_resource_limits(&one));
+        assert_eq!(res.milli_cpu, MILLI_CPU_PER_CORE);
 
         // A scratch disk asked for BY NAME is honoured, clamped into range.
         let scratch = json!({ "ephemeralDiskGb": 1, "resources": {} });
