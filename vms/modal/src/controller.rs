@@ -20,7 +20,7 @@ use caspar_vm_sdk::{parse_vm_resource_limits, VmPlugin, VmPluginMeta};
 use crate::client::{block_on, connect, is_configured, ModalConn};
 use crate::models::{
     app_link_key, image_link_key, modal_app_name, modal_volume_name, sandbox_link_key,
-    volume_link_key, ModalIdentity,
+    shared_app_link_key, volume_link_key, ModalIdentity,
 };
 use crate::proto;
 
@@ -282,14 +282,25 @@ impl ModalVmPlugin {
     /// sandboxes. Modal groups resources under an app; one app per Caspar
     /// machine keeps a creature's sandboxes, volumes and images together and
     /// makes them findable in Modal's dashboard by the machine they belong to.
+    /// Resolve the Modal app that owns this node's sandboxes.
+    ///
+    /// One app for the node. A machine that already has a per-project app
+    /// (the old naming) keeps it so its volume stays mountable; everything
+    /// new shares `modal_app_name()`.
     fn app_id(&self, conn: &mut ModalConn, machine_id: &str) -> Result<String, String> {
-        let key = app_link_key(machine_id);
-        let cached = state_get(&key);
-        if !cached.is_empty() {
-            return Ok(cached);
+        let legacy_key = app_link_key(machine_id);
+        let legacy = state_get(&legacy_key);
+        if !legacy.is_empty() {
+            return Ok(legacy);
+        }
+        let shared_key = shared_app_link_key();
+        let shared = state_get(&shared_key);
+        if !shared.is_empty() {
+            state_put(&legacy_key, &shared);
+            return Ok(shared);
         }
         let request = proto::AppGetOrCreateRequest {
-            app_name: modal_app_name(machine_id),
+            app_name: modal_app_name(),
             environment_name: conn.environment.clone(),
             object_creation_type: proto::ObjectCreationType::CreateIfMissing as i32,
         };
@@ -299,7 +310,8 @@ impl ModalVmPlugin {
         if response.app_id.is_empty() {
             return Err("modal returned an empty app id".to_string());
         }
-        state_put(&key, &response.app_id);
+        state_put(&shared_key, &response.app_id);
+        state_put(&legacy_key, &response.app_id);
         Ok(response.app_id)
     }
 
@@ -1717,11 +1729,12 @@ mod tests {
 
     #[test]
     fn resource_names_are_stable_and_modal_safe() {
-        let a = crate::models::modal_app_name("7@global");
+        let a = crate::models::modal_app_name();
         assert!(a
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'));
-        assert_eq!(a, crate::models::modal_app_name("7@global"));
+        assert_eq!(a, crate::models::modal_app_name());
+        assert_eq!(crate::models::shared_app_link_key(), format!("ModalApp::{}", a));
     }
 
     #[test]

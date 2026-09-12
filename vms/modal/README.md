@@ -16,8 +16,10 @@ MODAL_TOKEN_ID="ak-…"
 MODAL_TOKEN_SECRET="as-…"
 ```
 
-Optional: `MODAL_ENVIRONMENT`, `MODAL_SERVER_URL`, `MODAL_APP_PREFIX`,
-`MODAL_DEFAULT_IMAGE`, `MODAL_VOLUME_MOUNT_PATH`, `MODAL_SANDBOX_TIMEOUT_SECS`,
+Optional: `MODAL_ENVIRONMENT`, `MODAL_SERVER_URL`, `MODAL_APP_NAME` (one
+app for every project sandbox on this node; default is `MODAL_APP_PREFIX` or
+`caspar`), `MODAL_APP_PREFIX`, `MODAL_DEFAULT_IMAGE`,
+`MODAL_VOLUME_MOUNT_PATH`, `MODAL_SANDBOX_TIMEOUT_SECS`,
 `MODAL_IMAGE_BUILD_TIMEOUT_SECS`. See `node/sample.env`.
 
 With no credentials the plugin still registers; every operation then fails with
@@ -55,7 +57,8 @@ keeps **no in-process registry**. The mapping is node state:
 |-----|-------|
 | `ModalSandbox::<vmId>` | the sandbox id |
 | `ModalVolume::<vmId>` | the VM's persistent Volume |
-| `ModalApp::<machineId>` | the Modal app grouping a machine's resources |
+| `ModalApp::<shared name>` | the one Modal app for this node |
+| `ModalApp::<machineId>` | legacy per-project app id, if this space was created before the shared app |
 | `ModalImage::<machineId>::<entityId>` | the resolved image |
 
 This is what makes `restore` correct: a node coming back up re-attaches to a

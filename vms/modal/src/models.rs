@@ -63,13 +63,28 @@ pub(crate) fn image_link_key(machine_id: &str, entity_id: &str) -> String {
     format!("ModalImage::{}::{}", machine_id, entity_id)
 }
 
-/// Deterministic Modal app name for a Caspar machine. Modal app names allow a
-/// limited character set, so the machine id (which carries `@` and `:` for
-/// federated creatures) is sanitized rather than passed through.
-pub(crate) fn modal_app_name(machine_id: &str) -> String {
-    let prefix =
-        std::env::var("MODAL_APP_PREFIX").unwrap_or_else(|_| "caspar".to_string());
-    format!("{}-{}", prefix, sanitize_component(machine_id))
+/// Node-wide app cache. One Modal app owns every project sandbox.
+pub(crate) fn shared_app_link_key() -> String {
+    format!("ModalApp::{}", modal_app_name())
+}
+
+/// The Modal app every sandbox on this node belongs to.
+///
+/// Modal groups sandboxes and volumes under an app. One app per *project*
+/// filled the dashboard with empty apps and made every provision do its own
+/// AppGetOrCreate. Sandboxes and volumes already carry the project id; the
+/// app is the node's grouping, not the project's.
+///
+/// Override with `MODAL_APP_NAME`, or `MODAL_APP_PREFIX` (default `caspar`).
+pub(crate) fn modal_app_name() -> String {
+    if let Ok(name) = std::env::var("MODAL_APP_NAME") {
+        let trimmed = name.trim();
+        if !trimmed.is_empty() {
+            return sanitize_component(trimmed);
+        }
+    }
+    let prefix = std::env::var("MODAL_APP_PREFIX").unwrap_or_else(|_| "caspar".to_string());
+    sanitize_component(&prefix)
 }
 
 /// Deterministic Modal volume name for one VM instance.
