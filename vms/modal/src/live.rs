@@ -638,7 +638,7 @@ fn probe_project_machine() {
     let mut conn = crate::client::connect().expect("connect");
     let app_id = crate::client::block_on(conn.stub.app_get_or_create(
         crate::proto::AppGetOrCreateRequest {
-            app_name: crate::models::modal_app_name(&machine_id),
+            app_name: crate::models::modal_app_name(),
             environment_name: conn.environment.clone(),
             object_creation_type: crate::proto::ObjectCreationType::CreateIfMissing as i32,
         },
